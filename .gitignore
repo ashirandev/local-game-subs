@@ -15,3 +15,8 @@ band.png
 models/
 llama.cpp/
 overlay-position.json
+
+# fonts are licensed work -- never commit them
+fonts/
+font-comparison.png
+settings.json

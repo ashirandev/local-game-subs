@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-game-subs"
+version = "0.1.0"
+description = "Read a game's subtitles off your own screen with a small local vision model and show them translated, in an overlay. One machine, nothing uploaded."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Ashiran Arayachon" }]
+keywords = ["subtitles", "translation", "ocr", "vision-language-model", "llama.cpp", "overlay", "local-llm", "games"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Win32 (MS Windows)",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Graphics :: Capture :: Screen Capture",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["mss>=6.0", "numpy>=1.20", "Pillow>=8.0"]
+
+[project.scripts]
+gamesubs = "gamesubs.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/ashirandev/local-game-subs"
+Issues = "https://github.com/ashirandev/local-game-subs/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

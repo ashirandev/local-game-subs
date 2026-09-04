@@ -14,69 +14,49 @@ would be permanent. Hence global hotkeys, and hence no close button either:
 And while UNLOCKED it stays visible with a placeholder even when there is no subtitle, because
 you cannot drag something that is not on screen.
 
-WHERE THE LINE GOES IS NOT A CONSTANT. It depends on where the game draws its own subtitle in
-that scene, and nothing outside the game can know that. Drag-then-lock deletes the question
-instead of answering it wrongly for every game at once.
+THE TEXT IS DRAWN INTO AN IMAGE, NOT LAID OUT BY THE TOOLKIT -- see render.py. tkinter does not do
+complex text layout, and on Thai that is not a rough edge, it is unreadable: a live frame showed
+`เข้า E-Store เพื่อ` drawn as `เขา È-Store เพอ`, with a tone mark that had come off its own
+consonant and landed on the E of E-Store. The console showed the same line correctly, which is
+what proved the model and the transport were fine and only the drawing was wrong.
 
-THREE THINGS THAT LOOK LIKE BUGS AND ARE NOT:
+That also lets you use a font FILE rather than only a font the system has installed, which is what
+makes the fonts folder work.
+
+TWO THINGS THAT LOOK LIKE BUGS AND ARE NOT:
   * empty text means HIDE, not "draw an empty box"
-  * a literal newline in the text is the GAME's own line break -- honour it as a hard break; a
-    renderer that assumes one paragraph either prints the escape or welds two sentences together
-  * the block is measured and laid out bottom-up, never at a fixed y, because most lines are
-    short and the long one that wraps is the minority that breaks a fixed layout
-
-FONTS FAIL SILENTLY. A font without glyphs for your language does not refuse to render; it
-substitutes, and the result looks fine in a screenshot and wrong to a reader. `has_glyphs()`
-below measures a string in the candidate font and in a font known to lack the script: equal
-widths mean both are drawing the same fallback, so the candidate is not really being used.
+  * a literal newline in the text is the GAME's own line break, honoured as a hard break
 """
 import json
 import os
 import sys
 import threading
 import tkinter as tk
-import tkinter.font as tkfont
 import urllib.request
+
+from PIL import ImageTk
+
+from . import render
+from .server import app_dir, home
 
 POLL_MS = 150
 KEY = "#0b0c0d"        # chroma key: these pixels vanish entirely (Windows)
-PLATE = "#000000"      # the subtitle backing. Must stay clear of KEY -- a plate that drifts to
-                       # the key colour becomes invisible, which looks like the subtitle broke.
-from .server import app_dir
-
-# Beside everything else this tool keeps, so that deleting the folder really is a full uninstall.
 STATE = os.path.join(app_dir(), "overlay-position.json")
 IS_WIN = sys.platform == "win32"
-
-# Ordered by preference. The first one present AND carrying the script's glyphs wins.
-FONT_CANDIDATES = ["Noto Sans Thai", "Leelawadee UI", "Tahoma", "Noto Sans", "Segoe UI", "Arial"]
-NO_GLYPH_PROBE = "Wingdings"       # a font that has no Thai and no Latin text shaping to speak of
-
-
-def has_glyphs(root, family, sample):
-    """True when `family` is really drawing `sample` rather than silently substituting."""
-    try:
-        a = tkfont.Font(root=root, family=family, size=24).measure(sample)
-        b = tkfont.Font(root=root, family=NO_GLYPH_PROBE, size=24).measure(sample)
-    except tk.TclError:
-        return False
-    return a != b and a > 0
-
-
-def pick_font(root, sample, preferred=None):
-    fams = set(tkfont.families(root))
-    for f in ([preferred] if preferred else []) + FONT_CANDIDATES:
-        if f and f in fams and has_glyphs(root, f, sample):
-            return f
-    return "TkDefaultFont"
+SAMPLE = "เข้า E-Store เพื่อซื้อ"
 
 
 class Overlay:
-    def __init__(self, url, font=None, size=28, sample="ทดสอบ", in_capture=False):
+    def __init__(self, url, font=None, size=28, sample=SAMPLE, in_capture=False, max_width=1100):
         self.url = url
         self.in_capture = in_capture
+        self.size = size
+        self.max_width = max_width
         self.line = {"speaker": "", "text": ""}
         self.locked = False
+        self._img = None
+        self._shown = None
+
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -84,21 +64,22 @@ class Overlay:
             self.root.attributes("-transparentcolor", KEY)
         self.root.configure(bg=KEY)
 
-        fam = pick_font(self.root, sample, font)
-        self.font = tkfont.Font(root=self.root, family=fam, size=size, weight="bold")
-        self.small = tkfont.Font(root=self.root, family=fam, size=max(10, int(size * 0.55)))
-        print("font: %s" % fam)
+        path = render.resolve_font(font, sample, home("fonts"))
+        if not path:
+            raise SystemExit(
+                "no font on this machine can draw %r.\n"
+                "Drop a .ttf or .otf that covers your language into:\n  %s"
+                % (sample, home("fonts")))
+        self.font = render.load(path, size)
+        self.small = render.load(path, max(11, int(size * 0.55)))
+        print("font: %s" % os.path.basename(path))
 
-        self.frame = tk.Frame(self.root, bg=KEY)
-        self.frame.pack()
-        self.spk = tk.Label(self.frame, text="", font=self.small, fg="#cfd3d8", bg=PLATE,
-                            padx=10, pady=2)
-        self.txt = tk.Label(self.frame, text="", font=self.font, fg="#ffffff", bg=PLATE,
-                            padx=14, pady=6, justify="center", wraplength=1100)
+        self.label = tk.Label(self.root, bg=KEY, bd=0, highlightthickness=0)
+        self.label.pack()
 
         x, y = self._load_pos()
         self.root.geometry("+%d+%d" % (x, y))
-        for w in (self.root, self.frame, self.spk, self.txt):
+        for w in (self.root, self.label):
             w.bind("<Button-1>", self._grab)
             w.bind("<B1-Motion>", self._drag)
 
@@ -111,16 +92,17 @@ class Overlay:
     # ---------------------------------------------------------------- position
     def _load_pos(self):
         try:
-            d = json.load(open(STATE, encoding="utf-8"))
+            with open(STATE, encoding="utf-8") as f:
+                d = json.load(f)
             return int(d["x"]), int(d["y"])
         except Exception:
-            return self.root.winfo_screenwidth() // 2 - 400, \
-                   int(self.root.winfo_screenheight() * 0.78)
+            return (self.root.winfo_screenwidth() // 2 - 400,
+                    int(self.root.winfo_screenheight() * 0.78))
 
     def _save_pos(self):
         try:
-            json.dump({"x": self.root.winfo_x(), "y": self.root.winfo_y()},
-                      open(STATE, "w", encoding="utf-8"))
+            with open(STATE, "w", encoding="utf-8") as f:
+                json.dump({"x": self.root.winfo_x(), "y": self.root.winfo_y()}, f)
         except Exception:
             pass
 
@@ -138,13 +120,10 @@ class Overlay:
         Without it the tool reads its own output. The overlay is always-on-top and belongs at the
         bottom centre of the screen -- which is exactly the strip being watched -- so the
         translated line lands inside the next frame, gets read as a new subtitle, and gets
-        translated again. Seen in the very first end-to-end run: the placeholder text "drag me,
-        then Ctrl+Alt+L" came back as Thai, and then the Thai came back again.
+        translated again. Seen in the very first end-to-end run.
 
-        WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+) removes the window from anything that captures
-        the screen, this tool included. Note that this also hides it from OBS, so a streamer who
-        wants the subtitle in the broadcast passes --in-capture and keeps the overlay outside the
-        watched band.
+        Also hides it from OBS, so a streamer who wants the subtitle in the broadcast passes
+        --in-capture and keeps the overlay outside the watched band.
         """
         if not IS_WIN:
             return False
@@ -161,7 +140,7 @@ class Overlay:
 
     def _click_through(self, on):
         if not IS_WIN:
-            return                       # everything else still works; only pass-through is lost
+            return                       # everything else works; only pass-through is lost
         import ctypes
         GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT = -20, 0x00080000, 0x00000020
         u = ctypes.windll.user32
@@ -178,14 +157,14 @@ class Overlay:
             import ctypes
             g = ctypes.windll.user32.GetAsyncKeyState
             down = lambda k: g(k) & 0x8000
-            if down(0x11) and down(0x12):                       # Ctrl+Alt
-                if down(0x4C) and not getattr(self, "_l", False):    # L
+            if down(0x11) and down(0x12):                        # Ctrl+Alt
+                if down(0x4C) and not getattr(self, "_l", False):     # L
                     self.locked = not self.locked
                     self._click_through(self.locked)
                     self._save_pos()
                     print("locked" if self.locked else "unlocked -- drag it, Ctrl+Alt+L to lock")
                     self._l = True
-                elif down(0x51):                                     # Q
+                elif down(0x51):                                      # Q
                     self._save_pos()
                     self.root.destroy()
                     return
@@ -208,20 +187,24 @@ class Overlay:
 
     def _render(self):
         spk, txt = self.line["speaker"], self.line["text"]
-        if not txt and self.locked:
-            self.spk.pack_forget()
-            self.txt.pack_forget()
-        else:
-            # `\\n` twice on purpose: json.loads turns the escape into a real newline, but a
-            # service that double-escaped it sends the two characters through literally.
-            shown = (txt or "— drag me, then Ctrl+Alt+L —").replace("\\n", "\n")
-            self.txt.configure(text=shown)
-            if spk:
-                self.spk.configure(text=spk)
-                self.spk.pack(fill="x")
+        if not txt and not self.locked:
+            spk, txt = "", "— drag me, then Ctrl+Alt+L —"
+        key = (spk, txt)
+        if key != self._shown:
+            self._shown = key
+            im = render.draw_line(txt, spk, self.font, self.small, self.max_width)
+            if im is None:
+                self.label.pack_forget()
             else:
-                self.spk.pack_forget()
-            self.txt.pack()
+                # Composited against the chroma key rather than left transparent: the key colour
+                # is what the window manager punches out, and an RGBA image handed to Tk keeps
+                # its alpha against whatever is behind the label instead.
+                from PIL import Image
+                flat = Image.new("RGB", im.size, KEY)
+                flat.paste(im, (0, 0), im)
+                self._img = ImageTk.PhotoImage(flat)
+                self.label.configure(image=self._img)
+                self.label.pack()
         self.root.after(POLL_MS, self._render)
 
     def run(self):

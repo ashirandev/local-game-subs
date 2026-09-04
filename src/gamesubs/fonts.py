@@ -1,78 +1,74 @@
 # -*- coding: utf-8 -*-
-"""Show the same line in every font that can actually draw it, so you can pick one by eye.
+"""Draw the same words in every available font, so you can pick one by looking at them.
 
-A font either has your script's glyphs or it does not, and that part is measurable: render the
-same string in the candidate and in a font that definitely lacks the script, and if the two widths
-are identical you are looking at the same fallback in both. That check is worth running -- a
-silently substituted font looks fine in a screenshot and wrong to a reader.
+Drawn with the SAME code that draws the subtitles -- Pillow, from a font file. A chooser that
+previews through a different renderer than the one doing the work will happily recommend a font
+that then looks wrong in the overlay, which is exactly what happened here once already.
 
-BUT IT ONLY ANSWERS THE EASY HALF. Having the glyphs is not the same as placing them, and for Thai,
-Devanagari, Arabic and anything else with marks that attach to a base letter, placement is where it
-goes wrong. Windows will happily stitch a missing Thai vowel in from some other font mid-line, and
-what you get is marks that float away from the letters they belong to.
+The samples are the hard case on purpose: Thai words where two marks stack on one consonant.
+`ซื้อ` needs a vowel and a tone mark on the same ซ, and a font that cannot stack them silently
+draws `ซือ` -- a different word, rendered confidently, with nothing reporting a problem.
 
-There is no width you can measure that catches that. So this puts the candidates on screen at the
-size the overlay uses and lets you look, which is the only judge that works.
+There is no automatic verdict on that column, and not for want of trying. Three checks were
+written and all three were wrong: comparing pictures says every font passes, and comparing ink
+height says every font fails, because a well-made Thai font lowers the vowel when a tone mark
+joins it and the total height does not change by design. Whether a mark sits where it belongs is
+something you look at.
 """
-import tkinter as tk
-import tkinter.font as tkfont
+import os
 
-# A font with no Thai and essentially no text shaping: whatever it measures is the fallback.
-PROBE = "Wingdings"
+from PIL import Image, ImageDraw
 
-# Ordered by how they have held up in practice; the list is a starting point, not a verdict.
-CANDIDATES = [
-    "Noto Sans Thai", "Noto Sans Thai Looped", "Leelawadee UI", "Leelawadee", "Tahoma",
-    "IBM Plex Sans Thai", "Sarabun", "Prompt", "Kanit", "Angsana New", "Cordia New",
-    "Noto Sans", "Segoe UI", "Arial", "Google Sans",
-]
+from .render import STACKED_SAMPLES, folder_fonts, has_glyphs, load, system_fonts
 
-SAMPLE = "ที่นี่มีสระอิอีอูและวรรณยุกต์ไม้โท"
+ROW_H = 74
+NAME_W = 260
+BG = (12, 14, 16)
+OK_BG = (0, 0, 0)
+BAD_BG = (26, 14, 14)
 
 
-def survey(root, sample=SAMPLE, families=None):
-    """[(family, width, has_own_glyphs)] for every installed candidate."""
-    have = set(tkfont.families(root))
-    probe = tkfont.Font(root=root, family=PROBE, size=24).measure(sample)
-    out = []
-    for f in (families or CANDIDATES):
-        if f not in have:
+def candidates(extra_dir=None, sample=None):
+    """Every font file that can draw `sample`, folder fonts first."""
+    sample = sample or "".join(STACKED_SAMPLES)
+    seen, out = set(), []
+    for p in (folder_fonts(extra_dir) if extra_dir else []) + system_fonts():
+        key = os.path.basename(p).lower()
+        if key in seen:
             continue
-        w = tkfont.Font(root=root, family=f, size=24).measure(sample)
-        out.append((f, w, w != probe))
+        seen.add(key)
+        try:
+            if has_glyphs(load(p, 24), sample):
+                out.append(p)
+        except Exception:
+            continue
     return out
 
 
-def show(sample=SAMPLE, size=28, families=None):
-    """A window with the sample drawn in each candidate. Returns nothing; you are the judge."""
-    root = tk.Tk()
-    root.title("Which of these is drawn correctly?")
-    root.configure(bg="#14171a")
-
-    rows = survey(root, sample, families)
-    tk.Label(root, text="Same line, every font that can draw it. Look at where the marks sit.",
-             bg="#14171a", fg="#e8eaed", font=("Segoe UI", 11, "bold")
-             ).pack(padx=20, pady=(16, 2), anchor="w")
-    tk.Label(root, text="Greyed-out rows are not really drawing it -- they measure the same as a "
-                        "font with no glyphs at all,\nso Windows is substituting, and substitution "
-                        "is what makes marks float away from their letters.",
-             bg="#14171a", fg="#9aa0a6", font=("Segoe UI", 9), justify="left"
-             ).pack(padx=20, pady=(0, 12), anchor="w")
-
-    for fam, w, own in rows:
-        line = tk.Frame(root, bg="#14171a")
-        line.pack(fill="x", padx=20, pady=2)
-        tk.Label(line, text="%-22s" % fam, bg="#14171a", fg="#e8eaed" if own else "#5f6368",
-                 font=("Consolas", 9), width=24, anchor="w").pack(side="left")
-        tk.Label(line, text=sample, bg="#000000" if own else "#1a1c1e",
-                 fg="#ffffff" if own else "#6b6f73", font=(fam, size), padx=10, pady=3
-                 ).pack(side="left")
-        tk.Label(line, text="%4d px%s" % (w, "" if own else "  (fallback)"), bg="#14171a",
-                 fg="#5f6368", font=("Consolas", 8)).pack(side="left", padx=8)
-
-    tk.Label(root, text="Pick one and start with:   --font \"<name>\"", bg="#14171a", fg="#3fa7ff",
-             font=("Consolas", 10)).pack(padx=20, pady=(14, 16), anchor="w")
-    root.bind("<Escape>", lambda *_: root.destroy())
-    root.attributes("-topmost", True)
-    root.mainloop()
-    return rows
+def sheet(paths, size=40, words=None, out_path="font-comparison.png"):
+    """One image, one row per font, the same words in each. Returns the path written."""
+    words = words or STACKED_SAMPLES
+    text = "   ".join(words)
+    rows = paths or []
+    if not rows:
+        raise SystemExit("no font on this machine can draw those words. Drop a .ttf that covers "
+                         "your language into the fonts folder.")
+    width = NAME_W + 40 * len(text)
+    im = Image.new("RGB", (width, ROW_H * len(rows) + 60), BG)
+    d = ImageDraw.Draw(im)
+    # The header names the Thai words, so it has to be drawn in a font that HAS Thai -- PIL's
+    # built-in default does not, and would print the explanation as a row of boxes.
+    hf = load(rows[0], 15)
+    d.text((16, 12), "Same words, every usable font. Look at the marks above the letters.",
+           font=hf, fill=(232, 234, 237))
+    d.text((16, 32), "A font that cannot stack them draws  ซือ  where it should draw  ซื้อ.",
+           font=hf, fill=(154, 160, 166))
+    y = 56
+    for p in rows:
+        f = load(p, size)
+        d.rectangle([NAME_W - 8, y, width - 8, y + ROW_H - 6], fill=OK_BG)
+        d.text((16, y + ROW_H // 3), os.path.basename(p)[:34], fill=(120, 180, 255))
+        d.text((NAME_W + 8, y + 8), text, font=f, fill=(255, 255, 255))
+        y += ROW_H
+    im.save(out_path)
+    return out_path

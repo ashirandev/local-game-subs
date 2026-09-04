@@ -14,6 +14,7 @@ instead of showing up as "nothing appears" while you are in a game.
 """
 import argparse
 import io
+import os
 import sys
 import time
 
@@ -125,8 +126,37 @@ def cmd_setup(a):
         exe = server.fetch_llama(backend)
         print("llama-server: %s\n" % exe)
     server.fetch_model(a.dir)
+    _fonts_folder(server)
     print("\neverything is ready.  Next:  python -m gamesubs check")
     return 0
+
+
+FONTS_README = """Drop font files (.ttf or .otf) in here and they become available to the overlay.
+
+Why you might: the subtitle is drawn with whatever font is chosen, and a font without your
+language's glyphs does not refuse to draw -- it shows boxes, or the system quietly substitutes
+another font and the marks that sit above and below letters drift away from them.
+
+Anything in this folder is tried before the fonts installed on the machine. Pick one with:
+
+    python -m gamesubs fonts        see them all drawn, side by side
+    python -m gamesubs play --font "<name or filename>"
+
+Good free ones for Thai: Noto Sans Thai, IBM Plex Sans Thai, Sarabun (all open licences).
+On Windows, Leelawadee UI and Tahoma are already installed and both work.
+
+Nothing is shipped in here on purpose: a font is someone's licensed work, and plenty of the
+good-looking ones may not be redistributed.
+"""
+
+
+def _fonts_folder(server):
+    d = server.home("fonts")
+    p = os.path.join(d, "PUT-FONTS-HERE.txt")
+    if not os.path.isfile(p):
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(FONTS_README)
+    print("fonts folder: %s" % d)
 
 
 CHECK_LINES = [("", "We should keep moving before it gets dark."),
@@ -317,14 +347,22 @@ def cmd_play(a):
 
 
 def cmd_fonts(a):
-    """Draw the same line in every installed candidate, so the choice is made by looking."""
-    from .fonts import SAMPLE, show
-    rows = show(a.sample or SAMPLE, a.size)
-    print("\n%-24s %8s  %s" % ("font", "width", "drawing it itself?"))
-    for fam, w, own in rows:
-        print("  %-22s %6d  %s" % (fam, w, "yes" if own else "no -- Windows is substituting"))
-    print("\nEqual widths mean the same fallback in both, so those are not really being used.\n"
-          "Of the rest, only your eyes can say whether the marks sit where they belong.")
+    """Write one image with the same words in every usable font, and open it."""
+    from . import server
+    from .fonts import candidates, sheet
+    paths = candidates(server.home("fonts"))
+    out = os.path.join(server.app_dir(), "font-comparison.png")
+    sheet(paths, a.size, a.sample.split() if a.sample else None, out)
+    print("%d fonts can draw those words. Written to:\n  %s\n" % (len(paths), out))
+    for p in paths[:40]:
+        print("   %s" % os.path.basename(p))
+    print("\nOpen that image and look at the marks ABOVE the letters -- a font that cannot stack\n"
+          "them draws  ซือ  where it should draw  ซื้อ. Then start with:\n"
+          '   python -m gamesubs play --font "<filename>"')
+    try:
+        os.startfile(out)
+    except Exception:
+        pass
     return 0
 
 

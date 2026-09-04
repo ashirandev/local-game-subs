@@ -53,15 +53,33 @@ class Contract(unittest.TestCase):
         self.assertIn('d.get("text")', CODE)
 
     def test_empty_text_hides_rather_than_drawing_a_blank_box(self):
-        self.assertIn("if not txt and self.locked:", CODE)
+        # Behaviour, not a source string: nothing to say means nothing on screen.
+        from gamesubs import render
+        self.assertIsNone(render.draw_line(""))
+        self.assertIsNone(render.draw_line("   "))
+        self.assertIsNotNone(render.draw_line("something"))
 
     def test_it_polls_localhost_only(self):
         self.assertNotIn("http://", CODE.replace("http://127.0.0.1", ""))
 
+    def test_the_text_is_drawn_by_pillow_not_by_the_toolkit(self):
+        # The whole reason this module stopped using tk fonts: tkinter has no complex text
+        # layout, so Thai tone marks came off their consonants -- one of them landed on the E
+        # of "E-Store" in a live frame.
+        self.assertIn("render.draw_line", CODE)
+        self.assertNotIn("tkfont", CODE)
+
+    def test_a_font_that_cannot_draw_the_language_is_refused_at_startup(self):
+        # Rather than starting and showing a window full of boxes.
+        self.assertIn("no font on this machine can draw", CODE)
+
     def test_the_plate_colour_never_matches_the_chroma_key(self):
         # A plate that drifts to the key colour becomes invisible, and that reads as "the
-        # subtitle broke" rather than "two constants collided".
-        self.assertNotEqual(overlay.PLATE.lower(), overlay.KEY.lower())
+        # subtitle broke" rather than "two constants collided in a way nobody looked at".
+        from gamesubs import render
+        key = overlay.KEY.lstrip("#")
+        key_rgb = tuple(int(key[i:i + 2], 16) for i in (0, 2, 4))
+        self.assertNotEqual(render.PLATE[:3], key_rgb)
 
     def test_a_polled_error_does_not_kill_the_window(self):
         # Restarting the service must not take the overlay with it.

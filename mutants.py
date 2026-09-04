@@ -21,7 +21,7 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src", "gamesubs")
 TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py",
-         "test_no_phone_home.py"]
+         "test_no_phone_home.py", "test_overlay.py"]
 
 # (file, what it says now, what the mutant makes it say, what the mutant breaks)
 MUTANTS = [
@@ -92,6 +92,9 @@ MUTANTS = [
      "reasoning left on: every answer still correct, every line 4x too slow to keep up"),
     ("vision.py", '"chat_template_kwargs": {"enable_thinking": False}}', "}",
      "the per-request half of the same 4x, which the server flag alone does not guarantee"),
+    ("overlay.py", "def __init__(self, url, font=None, size=28, sample=",
+     "def __init__(self, url, in_capture=True, font=None, size=28, sample=",
+     "the overlay becomes visible to capture again and translates its own output forever"),
     ("service.py", 'ThreadingHTTPServer(("127.0.0.1", port), H)',
      'ThreadingHTTPServer(("0.0.0.0", port), H)',
      "what is on your screen becomes readable from the rest of the network"),

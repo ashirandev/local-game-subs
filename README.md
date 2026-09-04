@@ -247,6 +247,14 @@ budget thinking and return `content: ""` with the thinking in `reasoning_content
 field "so something comes back" scores the model's monologue instead of its answer, and the run
 looks healthy while measuring nothing. `vision.py` raises instead.
 
+**The overlay has to be invisible to screen capture.** It is always-on-top and it belongs at the
+bottom centre — which is exactly the strip being watched. So the translated line lands in the next
+frame, gets read as a new subtitle, and gets translated again. The first end-to-end run did this
+with its own placeholder: *"drag me, then Ctrl+Alt+L"* came back as Thai, and then the Thai came
+back. `WDA_EXCLUDEFROMCAPTURE` keeps the window on your monitor and out of every capture,
+including this tool's own. `--in-capture` turns that off for OBS, and then the overlay has to live
+outside the band.
+
 **Switch the model's reasoning off, twice.** Once as a server flag, once per request — either
 can override the other. With it on, the model writes out its thinking before answering, and for a
 one-line subtitle that thinking is most of the work: **2.5 s per line against 0.6 s**, same model,
@@ -310,18 +318,19 @@ python tests/test_capture.py     # the mask, the downscale, the gate, rendered-t
 python tests/test_vision.py      # the model client, against a real HTTP server
 python tests/test_service.py     # the job slot, the hold timer, what /current publishes
 python tests/test_server.py      # download, resume, checksums, asset picking
+python tests/test_overlay.py     # the window, and why it must be invisible to capture
 python tests/test_no_phone_home.py  # nothing in the play path can reach the internet
 ```
 
-102 tests, no network, no GPU, about a second.
+111 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 28 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **28/28 killed.** The first two on the list are the threshold bug above, which
+makes 29 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **29/29 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
 
 Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as

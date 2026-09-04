@@ -257,7 +257,8 @@ def cmd_play(a):
             server.wait_until_it_can_see(base, a.model, proc=proc)
             print("ready.\n")
         ov = subprocess.Popen([sys.executable, "-u", "-m", "gamesubs", "overlay",
-                               "--port", str(a.port)])
+                               "--port", str(a.port)]
+                              + (["--in-capture"] if a.in_capture else []))
         print("overlay opened -- drag it onto the game, then Ctrl+Alt+L to lock it.\n")
         return _loop(a, base)
     finally:
@@ -271,7 +272,7 @@ def cmd_play(a):
 def cmd_overlay(a):
     from .overlay import Overlay
     Overlay("http://127.0.0.1:%d/current" % a.port, font=a.font, size=a.size,
-            sample=a.sample).run()
+            sample=a.sample, in_capture=a.in_capture).run()
 
 
 # --------------------------------------------------------------------------- arguments
@@ -325,6 +326,8 @@ def main(argv=None):
     screen(pl)
     model(pl)
     output(pl)
+    pl.add_argument("--in-capture", action="store_true",
+                    help="let screen capture see the overlay, e.g. so OBS records it")
     pl.set_defaults(fn=cmd_play)
 
     t = sub.add_parser("tune", help="find --min-ink and --change for your game. No model.")
@@ -343,6 +346,10 @@ def main(argv=None):
     o.add_argument("--size", type=int, default=28)
     o.add_argument("--sample", default="ทดสอบ",
                    help="text used to check the font really has your script's glyphs")
+    o.add_argument("--in-capture", action="store_true",
+                   help="let screen capture see the overlay, e.g. so OBS records it. Off by "
+                        "default: the overlay sits in the strip being watched, so a visible one "
+                        "gets read as a new subtitle and translated again")
     o.set_defaults(fn=cmd_overlay)
 
     a = p.parse_args(argv)

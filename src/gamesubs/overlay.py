@@ -69,8 +69,9 @@ def pick_font(root, sample, preferred=None):
 
 
 class Overlay:
-    def __init__(self, url, font=None, size=28, sample="ทดสอบ"):
+    def __init__(self, url, font=None, size=28, sample="ทดสอบ", in_capture=False):
         self.url = url
+        self.in_capture = in_capture
         self.line = {"speaker": "", "text": ""}
         self.locked = False
         self.root = tk.Tk()
@@ -101,6 +102,8 @@ class Overlay:
         threading.Thread(target=self._poll, daemon=True).start()
         self.root.after(80, self._hotkeys)
         self.root.after(POLL_MS, self._render)
+        # After the window exists: it has no handle to set this on before then.
+        self.root.after(50, lambda: self._hide_from_capture(not self.in_capture))
 
     # ---------------------------------------------------------------- position
     def _load_pos(self):
@@ -126,6 +129,33 @@ class Overlay:
             self.root.geometry("+%d+%d" % (e.x_root - self._off[0], e.y_root - self._off[1]))
 
     # ---------------------------------------------------------------- locking
+    def _hide_from_capture(self, on=True):
+        """Make this window invisible to screen capture while staying visible on the monitor.
+
+        Without it the tool reads its own output. The overlay is always-on-top and belongs at the
+        bottom centre of the screen -- which is exactly the strip being watched -- so the
+        translated line lands inside the next frame, gets read as a new subtitle, and gets
+        translated again. Seen in the very first end-to-end run: the placeholder text "drag me,
+        then Ctrl+Alt+L" came back as Thai, and then the Thai came back again.
+
+        WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+) removes the window from anything that captures
+        the screen, this tool included. Note that this also hides it from OBS, so a streamer who
+        wants the subtitle in the broadcast passes --in-capture and keeps the overlay outside the
+        watched band.
+        """
+        if not IS_WIN:
+            return False
+        import ctypes
+        WDA_NONE, WDA_EXCLUDEFROMCAPTURE = 0x00, 0x11
+        u = ctypes.windll.user32
+        hwnd = u.GetParent(self.root.winfo_id()) or self.root.winfo_id()
+        ok = bool(u.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE if on else WDA_NONE))
+        if on and not ok:
+            print("could not hide the overlay from screen capture (needs Windows 10 2004 or\n"
+                  "newer). Drag the overlay ABOVE the watched strip, or it will read its own\n"
+                  "output and translate it again.")
+        return ok
+
     def _click_through(self, on):
         if not IS_WIN:
             return                       # everything else still works; only pass-through is lost

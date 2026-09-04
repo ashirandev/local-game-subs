@@ -94,6 +94,29 @@ def _choose_model(a):
     return got
 
 
+def _choose_font(a):
+    """Which font to draw with: --font, then the one saved, then the picker, then automatic.
+
+    Like the capture box, the chooser opens by itself the first time and never again, because the
+    answer only changes when you want it to.
+    """
+    from . import server
+    if getattr(a, "font", None):
+        return a.font
+    saved = server.load_font()
+    if saved and os.path.isfile(saved) and not getattr(a, "pick_font", False):
+        return saved
+    if getattr(a, "no_pick_font", False):
+        return saved
+    from .fontpick import choose
+    got = choose(server.home("fonts"), current=saved)
+    if got:
+        server.save_font(got)
+        print("font saved: %s" % os.path.basename(got))
+        return got
+    return saved
+
+
 def _jpg(rgb, max_width=1280, quality=88):
     from PIL import Image
     im = Image.fromarray(rgb)
@@ -333,8 +356,10 @@ def cmd_play(a):
             print("waiting for it to answer a question about a picture...")
             server.wait_until_it_can_see(base, a.model, proc=proc)
             print("ready.\n")
+        font = _choose_font(a)
         ov = subprocess.Popen([sys.executable, "-u", "-m", "gamesubs", "overlay",
                                "--port", str(a.port)]
+                              + (["--font", font] if font else [])
                               + (["--in-capture"] if a.in_capture else []))
         print("overlay opened -- drag it onto the game, then Ctrl+Alt+L to lock it.\n")
         return _loop(a, base)
@@ -433,6 +458,11 @@ def main(argv=None):
     output(pl)
     pl.add_argument("--in-capture", action="store_true",
                     help="let screen capture see the overlay, e.g. so OBS records it")
+    pl.add_argument("--font", default=None, help="font file or name to draw the subtitles with")
+    pl.add_argument("--pick-font", action="store_true",
+                    help="open the font chooser, replacing the saved choice")
+    pl.add_argument("--no-pick-font", action="store_true",
+                    help="never open the font chooser")
     pl.set_defaults(fn=cmd_play)
 
     t = sub.add_parser("tune", help="find --min-ink and --change for your game. No model.")

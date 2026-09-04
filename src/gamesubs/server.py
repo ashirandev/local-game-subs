@@ -114,6 +114,19 @@ def save_settings(d):
     os.replace(tmp, p)
 
 
+def load_font():
+    """The font chosen last time, or None."""
+    f = load_settings().get("font")
+    return f if isinstance(f, str) and f else None
+
+
+def save_font(path):
+    d = load_settings()
+    d["font"] = path
+    save_settings(d)
+    return path
+
+
 def load_region():
     """The saved capture box as (left, top, width, height), or None."""
     r = load_settings().get("region")

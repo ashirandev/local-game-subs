@@ -76,6 +76,21 @@ def _grab(sct, rect):
     return np.asarray(sct.grab(rect))[:, :, :3][:, :, ::-1]      # BGRA -> RGB
 
 
+def _hotkey_redraw():
+    """True when Ctrl+Alt+R is held down right now. Windows only; False everywhere else.
+
+    A global hotkey rather than a menu, for the same reason the overlay's lock is one: the window
+    you would put a button on is either not there or is click-through by then. And re-drawing the
+    box has to work WITHOUT restarting -- a restart means loading the model again, and nobody is
+    going to sit through that because a cutscene put the subtitles somewhere else.
+    """
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    g = ctypes.windll.user32.GetAsyncKeyState
+    return all(g(k) & 0x8000 for k in (0x11, 0x12, 0x52))        # Ctrl, Alt, R
+
+
 def _choose_model(a):
     """Which weights and projector to load.
 
@@ -317,11 +332,34 @@ def _loop(a, base_url, band=None):
     w.start()
     g = ChangeGate(a.bright, a.min_ink, a.change, a.off_ticks)
     sent = 0
-    print("watching the band -- Ctrl+C to stop.\n")
+    print("watching the band -- Ctrl+Alt+R to draw a new box, Ctrl+C to stop.\n")
     try:
         with _sct()() as sct:
             while True:
                 time.sleep(a.interval)
+                if _hotkey_redraw():
+                    from . import server
+                    from .region import select
+                    with _sct()() as s2:
+                        virtual = dict(s2.monitors[0])
+                    print("\n  drawing a new box -- Enter to accept, Esc to keep the old one")
+                    got = select(virtual, tuple(b.rect[k] for k in
+                                                ("left", "top", "width", "height")))
+                    if got:
+                        server.save_region(got)
+                        b = Band(b.mon, list(got), a.frac, a.wfrac)
+                        # The gate remembers what the last frame looked like, and that memory is
+                        # about the OLD rectangle. Kept, it would compare the first frame of a new
+                        # region against the last frame of a different one and call it unchanged.
+                        g = ChangeGate(a.bright, a.min_ink, a.change, a.off_ticks)
+                        srv.shutdown()
+                        srv = serve_http(cur, a.port, b.norm())
+                        cur.set()
+                        print("  new box: %dx%d at (%d,%d)\n"
+                              % (b.rect["width"], b.rect["height"], b.rect["left"], b.rect["top"]))
+                    else:
+                        print("  kept the old box\n")
+                    continue
                 state = g.feed(_grab(sct, b.rect))
                 if state == "gone":
                     if cur.get()["text"]:

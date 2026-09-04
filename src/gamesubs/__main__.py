@@ -61,17 +61,26 @@ def _jpg(rgb, max_width=1280, quality=88):
 # --------------------------------------------------------------------------- setup / check
 
 def cmd_setup(a):
+    """Everything needed to run, in one command: llama.cpp, then the model."""
     from . import server
-    server.fetch_model(a.dir)
     exe = server.find_server(a.llama_server)
-    print("\nmodel ready.")
     if exe:
-        print("llama-server: %s" % exe)
-        print("\nnext:  python -m gamesubs check")
+        print("llama-server already here: %s\n" % exe)
     else:
-        print("\nllama-server was NOT found. Download a build for your GPU from")
-        print("  https://github.com/ggml-org/llama.cpp/releases")
-        print("unzip it, then put it on your PATH or in:\n  %s" % server.home("llama.cpp"))
+        backend = a.backend
+        if backend == "auto":
+            # Measured, not assumed: on this machine the CUDA build reads a line in 0.6 s and the
+            # Vulkan build takes 3.6 s for the same five images and the same answers. A subtitle
+            # is on screen for two or three seconds, so that difference is not "a bit slower",
+            # it is "arrives after the line is gone". CUDA wherever there is an NVIDIA card;
+            # Vulkan is the fallback that works on any GPU.
+            backend = "cuda" if server.has_nvidia() else "vulkan"
+            print("no NVIDIA card detected -- using the Vulkan build.\n" if backend == "vulkan"
+                  else "NVIDIA card detected -- using the CUDA build (about 6x faster here).\n")
+        exe = server.fetch_llama(backend)
+        print("llama-server: %s\n" % exe)
+    server.fetch_model(a.dir)
+    print("\neverything is ready.  Next:  python -m gamesubs check")
     return 0
 
 
@@ -301,9 +310,11 @@ def main(argv=None):
         q.add_argument("--quality", type=int, default=88)
         q.add_argument("--max-hold", type=float, default=15.0, help="seconds a line may stay up")
 
-    s = sub.add_parser("setup", help="download the model (about 5.7 GB, resumable)")
-    s.add_argument("--dir", default=None, help="where to put it")
-    s.add_argument("--llama-server", default=None)
+    s = sub.add_parser("setup", help="download llama.cpp and the model (resumable)")
+    s.add_argument("--dir", default=None, help="where to put the model")
+    s.add_argument("--llama-server", default=None, help="use this llama-server instead")
+    s.add_argument("--backend", default="auto", choices=["auto", "cuda", "vulkan", "cpu"],
+                   help="auto picks cuda when an NVIDIA card is present, else vulkan")
     s.set_defaults(fn=cmd_setup)
 
     c = sub.add_parser("check", help="prove the setup works, no game needed")

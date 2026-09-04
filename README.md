@@ -24,17 +24,22 @@ anything. There is no injection, no memory reading, no modding — the game does
 | **OS** | Windows for the click-through overlay. The capture and translation halves are cross-platform |
 | **Python** | 3.8 or newer |
 
-**A GPU is the requirement, and here is why** — the same five test images, same model, same
-answers, measured on this machine with `gamesubs check`:
+**A GPU is the requirement, and here is why** — same five test images, same model, same answers,
+only the llama.cpp build changed. Measured on this machine with `gamesubs check`:
 
-| | seconds per line | read verbatim | invented a line |
-|---|---|---|---|
-| **RTX 5070 Ti 16 GB** | **0.6** (0.6–0.7) | 4/4 | no |
-| **CPU only** (28 cores, `-ngl 0`) | **18.2** (14.5–21.2) | 4/4 | no |
+| build | seconds per line | read verbatim | invented a line | download |
+|---|---|---|---|---|
+| **CUDA** (RTX 5070 Ti) | **0.6** (0.6–0.7) | 4/4 | no | 515 MB |
+| **Vulkan** (same card) | **3.6** (2.3–5.8) | 4/4 | no | 34 MB |
+| **CPU only** (28 cores) | **18.2** (14.5–21.2) | 4/4 | no | 18 MB |
 
-**27× slower, and exactly as accurate.** Running on the CPU does not make it worse at reading —
-it makes it too late to matter, because a subtitle is on screen for two or three seconds. So the
-number to check on your machine is speed, not quality, and `gamesubs check` prints it.
+**All three read every line correctly. Only the speed changes.** That is the whole decision: a
+subtitle is on screen for two or three seconds, so at 3.6 s the translation lands after the line
+has gone, and at 18 s it may as well not exist. Nothing here makes the model *worse* at reading —
+it makes it late, which for subtitles is the same as wrong.
+
+So `setup` picks CUDA when it finds an NVIDIA card and Vulkan otherwise, and `--backend` overrides
+it. I would have shipped Vulkan by default on the size alone; the measurement said no.
 
 ---
 
@@ -45,7 +50,7 @@ Everything is free. `gamesubs setup` fetches the model for you, but if you would
 | what | where | size |
 |---|---|---|
 | **Python** | [python.org/downloads](https://www.python.org/downloads/) — tick *Add Python to PATH* | ~30 MB |
-| **llama.cpp** | [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases) — pick the build for your GPU (CUDA for NVIDIA), unzip it | ~150 MB |
+| **llama.cpp** | `setup` fetches this for you. By hand: [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases) — take the newest **b-numbered** release, not the one GitHub labels *Latest* (that tag carries no binaries), and pick `bin-win-cuda-*` **plus** its matching `cudart-*` runtime zip, or `bin-win-vulkan-*` on its own | 34–515 MB |
 | **The model** | [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) | 4.7 GB |
 | **Vision projector** | [mmproj-BF16.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-BF16.gguf) | 945 MB |
 | (both, same page) | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | |
@@ -62,11 +67,18 @@ small enough to leave the GPU to the game.
 
 ## Quick start
 
+**No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
+unzip it, and double-click **`setup.bat`**. It installs the three Python packages, downloads
+llama.cpp and the model, and runs the check. Then double-click **`play.bat`**.
+
+If you would rather use the command line:
+
 ```bash
 pip install git+https://github.com/ashirandev/local-game-subs.git
 ```
 
-**1. Get the model** — 5.7 GB, resumable, skip it if you downloaded by hand above:
+**1. Get everything** — llama.cpp for your GPU plus the model, about 6 GB, resumable, and every
+step skips itself if it is already done:
 
 ```bash
 python -m gamesubs setup
@@ -213,8 +225,8 @@ string literals, or a `}` inside the translated line ends the object early.
 
 Measured with `gamesubs check`, on gemma-4 E4B Q4_K_M, RTX 5070 Ti 16 GB:
 
-- **0.6 s per line** on the GPU, **18.2 s** on the CPU — image in, translated line out
-- **4 of 4** rendered subtitles read verbatim and translated into natural Thai, on **both**
+- **0.6 s per line** on the CUDA build, **3.6 s** on Vulkan, **18.2 s** on the CPU
+- **4 of 4** rendered subtitles read verbatim and translated into natural Thai, on **all three**
 - **1 of 1** frame with no dialogue correctly returned empty, rather than inventing a line
 - **4.85 GB** of VRAM, model + projector + 8k context
 - the gate, on those four lines: **9** for a static line, **78** for the two most similar lines,
@@ -240,18 +252,18 @@ my card, and yours are different. The tool's job is to hand you your own.
 python tests/test_capture.py     # the mask, the downscale, the gate, rendered-text fixtures
 python tests/test_vision.py      # the model client, against a real HTTP server
 python tests/test_service.py     # the job slot, the hold timer, what /current publishes
-python tests/test_server.py      # download, resume, and the flags a vision model needs
+python tests/test_server.py      # download, resume, asset picking, the vision flags
 ```
 
-81 tests, no network, no GPU, about a second.
+88 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 21 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **21/21 killed.** The first two on the list are the threshold bug above, which
+makes 23 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **23/23 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
 
 Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as

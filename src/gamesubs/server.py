@@ -182,6 +182,93 @@ def wait_until_it_can_see(base_url, model="local", timeout=300, proc=None):
 
 
 
+LLAMA_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=12"
+
+# Backend -> the substring identifying its Windows asset, and the separate CUDA runtime zip when
+# that backend needs one. Vulkan is the default: 34 MB against 515 MB, no runtime to match to a
+# driver, and it works on NVIDIA, AMD and Intel alike. What that costs in speed is in the README.
+BACKENDS = {
+    "vulkan": ("bin-win-vulkan-x64", None),
+    "cuda": ("bin-win-cuda-13.3-x64", "cudart-llama-bin-win-cuda-13.3-x64"),
+    "cpu": ("bin-win-cpu-x64", None),
+}
+
+
+def _latest_build():
+    """The newest release that actually carries binaries.
+
+    Deliberately NOT /releases/latest. That endpoint answers with a tag holding a single asset
+    and no llama-server anywhere in it; the builds live in the b-numbered releases. Asking the
+    obvious endpoint hands a new user a download that cannot possibly work.
+    """
+    import json
+    req = urllib.request.Request(LLAMA_API, headers={"User-Agent": "local-game-subs"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        rels = json.load(r)
+    for rel in rels:
+        if rel.get("tag_name", "").startswith("b") and \
+                any(a["name"].startswith("llama-") for a in rel["assets"]):
+            return rel
+    raise SystemExit("no llama.cpp build release found. Download one by hand from "
+                     "https://github.com/ggml-org/llama.cpp/releases")
+
+
+def pick_assets(names, backend):
+    """Which files to download for `backend`, binary first. Empty when nothing matches.
+
+    Separated out and tested because it got this wrong on the first run, in a way that would have
+    downloaded 373 MB and produced no llama-server at all: asking for the CUDA build by the
+    substring `bin-win-cuda-13.3-x64` ALSO matches `cudart-llama-bin-win-cuda-13.3-x64.zip`, the
+    runtime package. Two files, one substring, and the wrong one sorts first.
+
+    So the binary is identified by BOTH the platform substring and the `llama-` prefix, and the
+    runtime by its own full prefix.
+    """
+    want, runtime = BACKENDS[backend]
+    out = [n for n in names if want in n and n.startswith("llama-")]
+    if out and runtime:
+        # The CUDA build ships WITHOUT the CUDA runtime DLLs, and missing them llama-server does
+        # not explain itself: a DLL error box, or on some systems nothing at all.
+        out += [n for n in names if n.startswith(runtime)]
+    return out
+
+
+def fetch_llama(backend="vulkan", dest_dir=None):
+    """Download and unzip llama.cpp's Windows build. Returns the path to llama-server.exe."""
+    import zipfile
+    if not WINDOWS:
+        raise SystemExit("automatic download is Windows-only. Install or build llama.cpp for your "
+                         "platform, then pass --llama-server /path/to/llama-server")
+    if backend not in BACKENDS:
+        raise SystemExit("unknown backend %r. Pick one of: %s"
+                         % (backend, ", ".join(sorted(BACKENDS))))
+    rel = _latest_build()
+    d = dest_dir or home("llama.cpp")
+    names = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
+    todo = pick_assets(sorted(names), backend)
+    if not todo:
+        raise SystemExit("release %s has no asset for the %s backend. It has:%s  %s%sDownload one "
+                         "by hand from %s"
+                         % (rel["tag_name"], backend, os.linesep,
+                            (os.linesep + "  ").join(sorted(names)), os.linesep, rel["html_url"]))
+    print("llama.cpp %s, %s build" % (rel["tag_name"], backend))
+    for n in todo:
+        z = os.path.join(d, n)
+        download(names[n], z, n)
+        with zipfile.ZipFile(z) as zf:
+            zf.extractall(d)
+        os.remove(z)
+    for base, _, files in os.walk(d):
+        if EXE in files:
+            return os.path.join(base, EXE)
+    raise SystemExit("unzipped %s but found no %s inside it." % (todo[0], EXE))
+
+
+def has_nvidia():
+    """True when nvidia-smi answers -- the only question that decides cuda vs vulkan."""
+    return gpu_used_mb() is not None
+
+
 def gpu_used_mb():
     """Total GPU memory in use right now, in MB, or None when nvidia-smi is not available.
 

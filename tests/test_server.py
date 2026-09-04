@@ -133,6 +133,55 @@ class Locate(unittest.TestCase):
         self.assertIn("llama-server", str(e.exception))
 
 
+ASSETS = sorted([
+    "cudart-llama-bin-win-cuda-12.4-x64.zip",
+    "cudart-llama-bin-win-cuda-13.3-x64.zip",
+    "llama-b10796-bin-macos-arm64.tar.gz",
+    "llama-b10796-bin-ubuntu-vulkan-x64.tar.gz",
+    "llama-b10796-bin-win-cpu-x64.zip",
+    "llama-b10796-bin-win-cuda-12.4-x64.zip",
+    "llama-b10796-bin-win-cuda-13.3-x64.zip",
+    "llama-b10796-bin-win-vulkan-x64.zip",
+    "llama-b10796-xcframework.zip",
+])
+
+
+class PickAssets(unittest.TestCase):
+    """Real asset names from a real release. The first version of this picked the wrong file."""
+
+    def test_cuda_takes_the_binary_not_the_runtime(self):
+        # `bin-win-cuda-13.3-x64` is a substring of BOTH the build and the 373 MB runtime package,
+        # and the runtime sorts first. Picking it downloads a third of a gigabyte and yields no
+        # llama-server at all.
+        got = server.pick_assets(ASSETS, "cuda")
+        self.assertEqual(got[0], "llama-b10796-bin-win-cuda-13.3-x64.zip")
+
+    def test_cuda_also_takes_the_runtime(self):
+        # The CUDA build has no CUDA runtime DLLs in it, and without them llama-server fails to
+        # start without explaining itself.
+        self.assertIn("cudart-llama-bin-win-cuda-13.3-x64.zip", server.pick_assets(ASSETS, "cuda"))
+
+    def test_vulkan_is_one_file_and_it_is_the_windows_one(self):
+        self.assertEqual(server.pick_assets(ASSETS, "vulkan"),
+                         ["llama-b10796-bin-win-vulkan-x64.zip"])
+
+    def test_cpu_picks_the_cpu_build(self):
+        self.assertEqual(server.pick_assets(ASSETS, "cpu"), ["llama-b10796-bin-win-cpu-x64.zip"])
+
+    def test_no_backend_ever_picks_a_non_windows_build(self):
+        for b in server.BACKENDS:
+            for n in server.pick_assets(ASSETS, b):
+                self.assertIn("win", n, "%s picked %s" % (b, n))
+
+    def test_a_release_without_the_wanted_build_returns_nothing(self):
+        # Empty, so the caller can print the real asset list and a link rather than downloading
+        # something that cannot work.
+        self.assertEqual(server.pick_assets(["llama-b1-bin-macos-arm64.tar.gz"], "cuda"), [])
+
+    def test_a_runtime_only_release_is_not_treated_as_a_build(self):
+        self.assertEqual(server.pick_assets(["cudart-llama-bin-win-cuda-13.3-x64.zip"], "cuda"), [])
+
+
 class Flags(unittest.TestCase):
     def test_the_batch_size_is_derived_from_the_image_ceiling(self):
         # One image must fit a single ubatch. If someone raises the ceiling and leaves the batch

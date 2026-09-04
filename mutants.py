@@ -75,6 +75,14 @@ MUTANTS = [
      "half a setup passes: weights without the projector, which fails only on images"),
     ("server.py", 'IMG_UB = IMG_CEIL + 32', "IMG_UB = 560",
      "batch size no longer covers one image, so the encode silently caps"),
+    ("server.py", 'out = [n for n in names if want in n and n.startswith("llama-")]',
+     "out = [n for n in names if want in n]",
+     "cuda picks the 373 MB runtime package instead of the build, and gets no llama-server"),
+    # (An earlier mutant here swapped startswith for `in` on the runtime prefix. It survived, and
+    # correctly: on a name that specific the two are the same test. Equivalent mutants get
+    # deleted rather than papered over with a test written to catch them.)
+    ("server.py", "if out and runtime:", "if runtime:",
+     "a release with only the runtime looks like a usable download: 373 MB, no llama-server"),
 ]
 
 

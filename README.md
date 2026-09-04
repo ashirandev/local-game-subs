@@ -15,17 +15,48 @@ anything. There is no injection, no memory reading, no modding — the game does
 
 ---
 
-## Requirements
+## What you need
 
-- Python 3.8+, Windows for the click-through overlay (the rest is cross-platform)
-- `pip install mss numpy Pillow`
-- **A vision-capable model** served on an OpenAI-compatible endpoint — [llama.cpp](https://github.com/ggml-org/llama.cpp)'s
-  `llama-server`, LM Studio, Ollama, vLLM. A small one is the point: this was built and measured on
-  a **4B model, 5.0 GB of weights plus a 0.9 GB vision projector**, which leaves the GPU usable for
-  the game.
+| | |
+|---|---|
+| **GPU** | ~6 GB of free VRAM. Measured use with the model, its vision projector and an 8k context: **4.85 GB** |
+| **Disk** | 5.7 GB for the model |
+| **OS** | Windows for the click-through overlay. The capture and translation halves are cross-platform |
+| **Python** | 3.8 or newer |
 
-A text-only model cannot do this. If your server refuses the first image, it has no projector
-loaded.
+**A GPU is the requirement, and here is why** — the same five test images, same model, same
+answers, measured on this machine with `gamesubs check`:
+
+| | seconds per line | read verbatim | invented a line |
+|---|---|---|---|
+| **RTX 5070 Ti 16 GB** | **0.6** (0.6–0.7) | 4/4 | no |
+| **CPU only** (28 cores, `-ngl 0`) | **18.2** (14.5–21.2) | 4/4 | no |
+
+**27× slower, and exactly as accurate.** Running on the CPU does not make it worse at reading —
+it makes it too late to matter, because a subtitle is on screen for two or three seconds. So the
+number to check on your machine is speed, not quality, and `gamesubs check` prints it.
+
+---
+
+## Downloads
+
+Everything is free. `gamesubs setup` fetches the model for you, but if you would rather click:
+
+| what | where | size |
+|---|---|---|
+| **Python** | [python.org/downloads](https://www.python.org/downloads/) — tick *Add Python to PATH* | ~30 MB |
+| **llama.cpp** | [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases) — pick the build for your GPU (CUDA for NVIDIA), unzip it | ~150 MB |
+| **The model** | [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) | 4.7 GB |
+| **Vision projector** | [mmproj-BF16.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-BF16.gguf) | 945 MB |
+| (both, same page) | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | |
+
+🛑 **You need BOTH files.** The projector is what lets the model see. Without it the server
+starts normally, answers questions about text, and then fails on every single frame — which looks
+like this tool is broken rather than like a file is missing.
+
+Put both in `%USERPROFILE%\.local-game-subs\models` (or wherever, and pass `--llama-server` and
+your own `--base-url`). Any other vision model works too; this one is the default because it is
+small enough to leave the GPU to the game.
 
 ---
 
@@ -35,7 +66,37 @@ loaded.
 pip install git+https://github.com/ashirandev/local-game-subs.git
 ```
 
-**1. Point it at your subtitles and find your numbers.** No model is loaded, nothing is published:
+**1. Get the model** — 5.7 GB, resumable, skip it if you downloaded by hand above:
+
+```bash
+python -m gamesubs setup
+```
+
+**2. Prove it works, before you touch a game:**
+
+```bash
+python -m gamesubs check
+```
+
+It renders subtitles, sends them to your model, and prints what came back plus your seconds per
+line. A minute here turns "nothing appears in my game" into an error message you can actually
+read.
+
+**3. Play:**
+
+```bash
+python -m gamesubs play
+```
+
+That starts the model, the translator and the overlay together. Drag the overlay where you want
+the line, then `Ctrl+Alt+L` to lock it — locked, it is click-through and the game gets every
+click. `Ctrl+Alt+Q` quits and saves the position.
+
+The hotkeys are global because they have to be: a locked window cannot be clicked, so an unlock
+button *on the window* would make the first lock permanent.
+
+**If subtitles are missed, or the same line is read over and over,** tune the two thresholds for
+your game:
 
 ```bash
 python -m gamesubs tune
@@ -50,26 +111,11 @@ Play for a minute and watch two columns. `ink` is how many subtitle-coloured pix
 band — look at it with a line up and with none, and put `--min-ink` between the two. `chg` is how
 much changed — look at it while a line sits there and when a new line appears, and put `--change`
 between those. It also writes `band.png`, the exact crop being read; open it and check your
-subtitles are inside it.
-
-**2. Run it:**
+subtitles are inside it. Then:
 
 ```bash
-python -m gamesubs run --base-url http://127.0.0.1:8080/v1 --model gemma --lang Thai \
-                       --min-ink 900 --change 40
+python -m gamesubs play --min-ink 900 --change 40
 ```
-
-**3. Show it, in a second terminal:**
-
-```bash
-python -m gamesubs overlay
-```
-
-Drag the window where you want the line, then `Ctrl+Alt+L` to lock it — locked, it is
-click-through and the game gets every click. `Ctrl+Alt+Q` quits and saves the position.
-
-The hotkeys are global because they have to be: a locked window cannot be clicked, so an unlock
-button *on the window* would make the first lock permanent.
 
 ---
 
@@ -165,13 +211,17 @@ string literals, or a `}` inside the translated line ends the object early.
 
 ## What is measured, and what is not
 
-Measured, on a 4B vision model on a 16 GB card:
+Measured with `gamesubs check`, on gemma-4 E4B Q4_K_M, RTX 5070 Ti 16 GB:
 
-- **~0.6–0.7 s per line**, image to translated text, with the schema honoured by the server
-- **4 of 4** rendered subtitles read verbatim and translated into natural Thai
+- **0.6 s per line** on the GPU, **18.2 s** on the CPU — image in, translated line out
+- **4 of 4** rendered subtitles read verbatim and translated into natural Thai, on **both**
 - **1 of 1** frame with no dialogue correctly returned empty, rather than inventing a line
+- **4.85 GB** of VRAM, model + projector + 8k context
 - the gate, on those four lines: **9** for a static line, **78** for the two most similar lines,
   against a threshold of **30** — noise and signal on opposite sides with room to spare
+
+Every one of those numbers comes out of `gamesubs check`, so you can produce your own rather than
+take mine.
 
 **Not measured: how well any model reads subtitles over real gameplay.** Rendered bands are much
 easier than text sitting on top of moving scenery — different contrast, compression, motion blur
@@ -179,8 +229,8 @@ and background. Everything above establishes that the path works end to end. It 
 about accuracy in a real game, and I would not quote it as such. If you run it on a game, the
 numbers you get are the numbers that count.
 
-`tune` exists for exactly this reason: every threshold here was measured on my screen, and yours
-is a different screen.
+`tune` and `check` exist for exactly this reason: every number here was measured on my screen and
+my card, and yours are different. The tool's job is to hand you your own.
 
 ---
 
@@ -190,18 +240,25 @@ is a different screen.
 python tests/test_capture.py     # the mask, the downscale, the gate, rendered-text fixtures
 python tests/test_vision.py      # the model client, against a real HTTP server
 python tests/test_service.py     # the job slot, the hold timer, what /current publishes
+python tests/test_server.py      # download, resume, and the flags a vision model needs
 ```
 
-67 tests, no network, no GPU, about a second.
+81 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 16 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **16/16 killed.** The first two on the list are the threshold bug above, which
+makes 21 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **21/21 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
+
+Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as
+the code it replaces can leave a stale `.pyc` behind, because Python judges bytecode fresh from
+the source's size and its mtime in whole seconds. Mutate, test and restore inside one second and
+the suite then fails on correct code. It does not look like a caching problem — it looks like a
+flaky test.
 
 ---
 

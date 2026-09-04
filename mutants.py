@@ -14,12 +14,13 @@ the suite has been wrong before.
 """
 import io
 import os
+import shutil
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src", "gamesubs")
-TESTS = ["test_capture.py", "test_vision.py", "test_service.py"]
+TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py"]
 
 # (file, what it says now, what the mutant makes it say, what the mutant breaks)
 MUTANTS = [
@@ -38,9 +39,10 @@ MUTANTS = [
     ("capture.py", "            self.last = None      # the next line starts fresh",
      "            pass                  # the next line starts fresh",
      "comparing across a gap, so a repeated line is silently swallowed"),
-    ("capture.py", "h = int(m[\"height\"] * frac)\n            l, t, w = m[\"left\"], m[\"top\"] + m[\"height\"] - h, m[\"width\"]",
-     "h = int(m[\"height\"] * frac)\n            l, t, w = m[\"left\"], m[\"top\"], m[\"width\"]",
+    ("capture.py", 't = m["top"] + m["height"] - h', 't = m["top"]',
      "default band moves to the top of the screen"),
+    ("capture.py", 'l = m["left"] + (m["width"] - w) // 2', 'l = m["left"]',
+     "default band stops being centred and hugs the left edge"),
     ("service.py", "dropped = self.job is not None", "dropped = False",
      "a replaced frame is no longer reported, so falling behind is invisible"),
     ("service.py", "if th and spk and th.strip().lower() == spk.strip().lower():",
@@ -63,12 +65,43 @@ MUTANTS = [
     ("vision.py", "raise RuntimeError(\"%s -- %s\" % (e, e.read().decode(\"utf-8\", \"replace\")[:400]))",
      "raise RuntimeError(str(e))",
      "HTTP error loses the body, which is the only part that says what went wrong"),
+    ("server.py", 'if have and getattr(r, "status", 200) != 206:', "if False:",
+     "a server that ignores Range gets its whole file APPENDED to the partial one -- right size, "
+     "wrong bytes"),
+    ("server.py", "    if total is None:", "    if False:",
+     "a download with no declared size is guessed at instead of refused"),
+    ("server.py", "return (m, p) if os.path.isfile(m) and os.path.isfile(p) else (None, None)",
+     "return (m, p) if os.path.isfile(m) else (None, None)",
+     "half a setup passes: weights without the projector, which fails only on images"),
+    ("server.py", 'IMG_UB = IMG_CEIL + 32', "IMG_UB = 560",
+     "batch size no longer covers one image, so the encode silently caps"),
 ]
+
+
+def drop_bytecode():
+    """Delete every __pycache__ under the repo. NOT optional, and the reason is nasty.
+
+    Python decides a .pyc is current from the source's SIZE and its mtime IN WHOLE SECONDS.
+    Several mutants here replace a fragment with one of exactly the same length -- `> thr` becomes
+    `> 127` -- and mutate, test and restore all happen inside one second. So the restore puts the
+    original source back and Python goes on running the MUTANT's bytecode: the suite then fails on
+    code that is correct, and stays failing until something touches the file again.
+
+    It cost one confusing run to find, and it did not present as a caching problem. It presented
+    as a flaky test.
+    """
+    for base, dirs, _ in os.walk(ROOT):
+        for d in list(dirs):
+            if d == "__pycache__":
+                shutil.rmtree(os.path.join(base, d), ignore_errors=True)
+                dirs.remove(d)
 
 
 def run_tests():
     for t in TESTS:
-        p = subprocess.run([sys.executable, "-X", "utf8", os.path.join("tests", t)],
+        # -B as well as the sweep above: belt and braces, because a stale .pyc does not look like
+        # a caching problem here -- it looks like the mutant survived.
+        p = subprocess.run([sys.executable, "-B", "-X", "utf8", os.path.join("tests", t)],
                            cwd=ROOT, capture_output=True)
         if p.returncode != 0:
             return False, t
@@ -91,10 +124,12 @@ def main():
             survived += 1
             continue
         io.open(path, "w", encoding="utf-8", newline="\n").write(src.replace(old, new, 1))
+        drop_bytecode()
         try:
             alive, broke = run_tests()
         finally:
             io.open(path, "w", encoding="utf-8", newline="\n").write(src)
+            drop_bytecode()
         if alive:
             survived += 1
             print("%2d. SURVIVED  %-11s %s" % (i, fname, what))

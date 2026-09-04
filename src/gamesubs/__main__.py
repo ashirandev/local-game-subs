@@ -1,24 +1,30 @@
 # -*- coding: utf-8 -*-
-"""Command line: `tune` to find your thresholds, `run` to translate, `overlay` to show the line.
+"""Command line.
 
-`tune` exists because every threshold in here is per-game and I would otherwise be shipping you
-constants measured on my screen. It loads no model and publishes nothing -- it just prints what
-the gate is seeing, so you set `--min-ink` and `--change` from numbers you watched on YOUR game.
-Run it first on any new game; it takes about a minute.
+    setup     download the model (about 5.7 GB, resumable)
+    check     prove your setup works, without launching a game
+    play      start the model, the translator and the overlay -- one command
+    tune      find the two thresholds for your game
+    run       the translator alone, against a server you started yourself
+    overlay   the on-screen window alone
+
+`check` before `play` is worth the minute it takes. It renders subtitles, sends them to your
+model and prints what came back, so a broken setup fails there -- with an error you can read --
+instead of showing up as "nothing appears" while you are in a game.
 """
 import argparse
 import io
 import sys
 import time
 
-from .capture import Band, ChangeGate, ink
-from .service import Current, SNAP, Worker, serve_http
+from .capture import Band, ChangeGate
+from .service import Current, PROMPT, SCHEMA, SNAP, Worker, serve_http
 from .vision import VisionClient
 
 
 def _sct():
-    """mss renamed mss.mss to mss.MSS and deprecated the old spelling. Support both, so
-    the tool does not open with a warning on one version or fail outright on the other."""
+    """mss renamed mss.mss to mss.MSS and deprecated the old spelling. Support both, so the tool
+    neither opens with a warning on one version nor fails outright on the other."""
     import mss
     return getattr(mss, "MSS", None) or mss.mss
 
@@ -42,6 +48,125 @@ def _grab(sct, rect):
     return np.asarray(sct.grab(rect))[:, :, :3][:, :, ::-1]      # BGRA -> RGB
 
 
+def _jpg(rgb, max_width=1280, quality=88):
+    from PIL import Image
+    im = Image.fromarray(rgb)
+    if im.width > max_width:
+        im = im.resize((max_width, int(im.height * max_width / im.width)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=quality)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- setup / check
+
+def cmd_setup(a):
+    from . import server
+    server.fetch_model(a.dir)
+    exe = server.find_server(a.llama_server)
+    print("\nmodel ready.")
+    if exe:
+        print("llama-server: %s" % exe)
+        print("\nnext:  python -m gamesubs check")
+    else:
+        print("\nllama-server was NOT found. Download a build for your GPU from")
+        print("  https://github.com/ggml-org/llama.cpp/releases")
+        print("unzip it, then put it on your PATH or in:\n  %s" % server.home("llama.cpp"))
+    return 0
+
+
+CHECK_LINES = [("", "We should keep moving before it gets dark."),
+               ("NAOE", "I told you not to follow me."),
+               ("", "Take the left path. I'll cover you from here."),
+               ("YASUKE", "Stay behind me."),
+               (None, None)]                # no subtitle: the model must return empty
+
+
+def _render(speaker, text, w=1280, h=260):
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new("RGB", (w, h), (26, 30, 24))
+    d = ImageDraw.Draw(im)
+    for i in range(0, w, 40):                       # background structure, not a flat colour
+        d.line([(i, 0), (i - 60, h)], fill=(34, 40, 32), width=9)
+    if text is None:
+        d.rectangle([40, 30, 300, 54], fill=(200, 60, 40))       # a HUD bar, no dialogue
+        return im
+    f = fs = None
+    for name in ("arialbd.ttf", "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"):
+        try:
+            f, fs = ImageFont.truetype(name, 40), ImageFont.truetype(name, 24)
+            break
+        except OSError:
+            continue
+    if f is None:
+        f = fs = ImageFont.load_default()
+    if speaker:
+        d.text((w // 2, 70), speaker, font=fs, fill=(210, 214, 220), anchor="mm")
+    d.text((w // 2, 130), text, font=f, fill=(255, 255, 255), anchor="mm")
+    return im
+
+
+def cmd_check(a):
+    """Render subtitles, send them to the model, and say plainly whether this setup works."""
+    from . import server
+    proc = None
+    try:
+        base = a.base_url
+        if not base:
+            proc = server.start(exe=a.llama_server, port=a.server_port)
+            base = "http://127.0.0.1:%d/v1" % a.server_port
+            print("waiting for it to answer a question about a picture...")
+            server.wait_until_it_can_see(base, a.model, proc=proc)
+            print("it can see.\n")
+        vram = server.gpu_used_mb()
+        if vram:
+            print("GPU memory in use: %.1f GB\n" % (vram / 1024.0))
+
+        vc = VisionClient(base, a.model)
+        read = blank_ok = 0
+        times = []
+        for spk, txt in CHECK_LINES:
+            buf = io.BytesIO()
+            _render(spk, txt).save(buf, "JPEG", quality=88)
+            t0 = time.time()
+            try:
+                d = vc.ask(PROMPT.format(lang=a.lang), image=buf.getvalue(), schema=SCHEMA)
+            except Exception as e:
+                print("  FAILED  %s: %s" % (type(e).__name__, str(e).split("\n")[0][:140]))
+                return 1
+            dt = time.time() - t0
+            times.append(dt)
+            en, th = (d.get("en") or "").strip(), (d.get("th") or "").strip()
+            if txt is None:
+                blank_ok = 0 if th else 1
+                print("  [%4.1fs] no subtitle on screen -> %s"
+                      % (dt, "correctly returned nothing" if not th
+                         else "WRONG, it invented %r" % th[:40]))
+            else:
+                hit = en.rstrip(".").lower() == txt.rstrip(".").lower()
+                read += hit
+                print("  [%4.1fs] %s\n           read %s\n           -> %s"
+                      % (dt, txt, "exactly" if hit else "as %r" % en[:60], th[:70] or "(nothing)"))
+
+        n = len(CHECK_LINES) - 1
+        print("\n  read verbatim           : %d/%d" % (read, n))
+        print("  empty frame stayed empty: %s" % ("yes" if blank_ok else "NO -- it invents lines"))
+        print("  seconds per line        : %.1f   (fastest %.1f, slowest %.1f)"
+              % (sum(times) / len(times), min(times), max(times)))
+        print("  schema honoured         : %s" % vc.schema_honoured)
+        ok = read >= n - 1 and blank_ok
+        print("\n%s" % ("PASS -- this setup works.  Next:  python -m gamesubs play" if ok else
+                        "Something is off. A model that misreads clean rendered text will do worse\n"
+                        "on a real game -- try a larger model, or point --base-url at another "
+                        "server."))
+        return 0 if ok else 1
+    finally:
+        if proc:
+            proc.terminate()
+
+
+# --------------------------------------------------------------------------- the pipeline
+
 def cmd_tune(a):
     from PIL import Image
     b = _band(a)
@@ -59,26 +184,24 @@ def cmd_tune(a):
             time.sleep(a.interval)
 
 
-def cmd_run(a):
-    from PIL import Image
+def _log(secs=None, blank=False, error=None, speaker="", source="", text="", tokens=None):
+    if error:
+        print("  [model] %s" % error)
+    elif blank:
+        print("  [%5.1fs] (no subtitle in that frame)" % secs)
+    else:
+        print("  [%5.1fs] %s%s\n           -> %s%s"
+              % (secs, (speaker + ": ") if speaker else "", source[:90], text[:90],
+                 "   (%s tok)" % tokens if tokens else ""))
+
+
+def _loop(a, base_url):
+    """Watch the band and translate. Shared by `run` and `play`."""
     b = _band(a)
     cur = Current()
     srv = serve_http(cur, a.port, b.norm())
     print("serving http://127.0.0.1:%d/current   (also /snap /health /band)" % a.port)
-    print("overlay:  python -m gamesubs overlay --port %d\n" % a.port)
-
-    def log(secs=None, blank=False, error=None, speaker="", source="", text="", tokens=None):
-        if error:
-            print("  [model] %s" % error)
-        elif blank:
-            print("  [%5.1fs] (no subtitle in that frame)" % secs)
-        else:
-            print("  [%5.1fs] %s%s\n           -> %s%s"
-                  % (secs, (speaker + ": ") if speaker else "", source[:90], text[:90],
-                     "   (%s tok)" % tokens if tokens else ""))
-
-    client = VisionClient(a.base_url, a.model, a.api_key)
-    w = Worker(client, cur, a.lang, on_line=log)
+    w = Worker(VisionClient(base_url, a.model, a.api_key), cur, a.lang, on_line=_log)
     w.start()
     g = ChangeGate(a.bright, a.min_ink, a.change, a.off_ticks)
     sent = 0
@@ -95,13 +218,7 @@ def cmd_run(a):
                 elif state == "same":
                     cur.expire(a.max_hold)
                 elif state == "new":
-                    im = Image.fromarray(_grab(sct, b.rect))
-                    if im.width > a.max_width:
-                        im = im.resize((a.max_width, int(im.height * a.max_width / im.width)),
-                                       Image.LANCZOS)
-                    buf = io.BytesIO()
-                    im.save(buf, "JPEG", quality=a.quality)
-                    SNAP["jpg"] = buf.getvalue()
+                    SNAP["jpg"] = _jpg(_grab(sct, b.rect), a.max_width, a.quality)
                     sent += 1
                     if w.submit(SNAP["jpg"]):
                         print("  (dropped a waiting frame -- the model is behind the game)")
@@ -110,6 +227,36 @@ def cmd_run(a):
               % (sent, w.n, w.blank, w.err))
     finally:
         srv.shutdown()
+    return 0
+
+
+def cmd_run(a):
+    return _loop(a, a.base_url or "http://127.0.0.1:8080/v1")
+
+
+def cmd_play(a):
+    """Model, translator and overlay, from one command."""
+    import subprocess
+    from . import server
+    proc = ov = None
+    try:
+        base = a.base_url
+        if not base:
+            proc = server.start(exe=a.llama_server, port=a.server_port)
+            base = "http://127.0.0.1:%d/v1" % a.server_port
+            print("waiting for it to answer a question about a picture...")
+            server.wait_until_it_can_see(base, a.model, proc=proc)
+            print("ready.\n")
+        ov = subprocess.Popen([sys.executable, "-u", "-m", "gamesubs", "overlay",
+                               "--port", str(a.port)])
+        print("overlay opened -- drag it onto the game, then Ctrl+Alt+L to lock it.\n")
+        return _loop(a, base)
+    finally:
+        # Both are children of this process and would otherwise outlive it: a window polling a
+        # dead port, and a model sitting on the GPU.
+        for p in (ov, proc):
+            if p:
+                p.terminate()
 
 
 def cmd_overlay(a):
@@ -117,6 +264,8 @@ def cmd_overlay(a):
     Overlay("http://127.0.0.1:%d/current" % a.port, font=a.font, size=a.size,
             sample=a.sample).run()
 
+
+# --------------------------------------------------------------------------- arguments
 
 def main(argv=None):
     p = argparse.ArgumentParser("gamesubs", description=__doc__.split("\n")[0])
@@ -135,24 +284,49 @@ def main(argv=None):
         q.add_argument("--interval", type=float, default=1 / 12.0,
                        help="seconds between looks. Default 12 fps")
 
+    def model(q, with_server=True):
+        q.add_argument("--base-url", default=None,
+                       help="an OpenAI-compatible server you started yourself. Omit it and one "
+                            "is started for you")
+        q.add_argument("--model", default="local", help="model name your server expects")
+        q.add_argument("--lang", default="Thai", help="target language, written as you would say it")
+        if with_server:
+            q.add_argument("--llama-server", default=None, help="path to llama-server")
+            q.add_argument("--server-port", type=int, default=8080)
+
+    def output(q):
+        q.add_argument("--port", type=int, default=8914)
+        q.add_argument("--api-key", default=None)
+        q.add_argument("--max-width", type=int, default=1280, help="downscale before sending")
+        q.add_argument("--quality", type=int, default=88)
+        q.add_argument("--max-hold", type=float, default=15.0, help="seconds a line may stay up")
+
+    s = sub.add_parser("setup", help="download the model (about 5.7 GB, resumable)")
+    s.add_argument("--dir", default=None, help="where to put it")
+    s.add_argument("--llama-server", default=None)
+    s.set_defaults(fn=cmd_setup)
+
+    c = sub.add_parser("check", help="prove the setup works, no game needed")
+    model(c)
+    c.set_defaults(fn=cmd_check)
+
+    pl = sub.add_parser("play", help="model + translator + overlay, one command")
+    screen(pl)
+    model(pl)
+    output(pl)
+    pl.set_defaults(fn=cmd_play)
+
     t = sub.add_parser("tune", help="find --min-ink and --change for your game. No model.")
     screen(t)
     t.set_defaults(fn=cmd_tune)
 
-    r = sub.add_parser("run", help="translate the band and publish /current")
+    r = sub.add_parser("run", help="the translator alone, against your own server")
     screen(r)
-    r.add_argument("--base-url", default="http://127.0.0.1:8080/v1",
-                   help="any OpenAI-compatible server (llama.cpp, LM Studio, Ollama, vLLM)")
-    r.add_argument("--model", default="local", help="model name your server expects")
-    r.add_argument("--api-key", default=None)
-    r.add_argument("--lang", default="Thai", help="target language, written as you'd say it")
-    r.add_argument("--port", type=int, default=8914)
-    r.add_argument("--max-width", type=int, default=1280, help="downscale the band before sending")
-    r.add_argument("--quality", type=int, default=88)
-    r.add_argument("--max-hold", type=float, default=15.0, help="seconds a line may stay up")
+    model(r, with_server=False)
+    output(r)
     r.set_defaults(fn=cmd_run)
 
-    o = sub.add_parser("overlay", help="the on-screen window")
+    o = sub.add_parser("overlay", help="the on-screen window alone")
     o.add_argument("--port", type=int, default=8914)
     o.add_argument("--font", default=None, help="force a font family")
     o.add_argument("--size", type=int, default=28)

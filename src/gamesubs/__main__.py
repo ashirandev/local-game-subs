@@ -303,9 +303,13 @@ def _log(secs=None, blank=False, error=None, speaker="", source="", text="", tok
                  "   (%s tok)" % tokens if tokens else ""))
 
 
-def _loop(a, base_url):
-    """Watch the band and translate. Shared by `run` and `play`."""
-    b = _band(a)
+def _loop(a, base_url, band=None):
+    """Watch the band and translate. Shared by `run` and `play`.
+
+    `band` is passed in by `play`, which asks for it up front while the model loads. `run` has
+    nothing to overlap with, so it asks here.
+    """
+    b = band or _band(a)
     cur = Current()
     srv = serve_http(cur, a.port, b.norm())
     print("serving http://127.0.0.1:%d/current   (also /snap /health /band)" % a.port)
@@ -343,26 +347,36 @@ def cmd_run(a):
 
 
 def cmd_play(a):
-    """Model, translator and overlay, from one command."""
+    """Model, translator and overlay, from one command.
+
+    Three questions nobody can answer for you -- which model, which font, which part of the
+    screen -- and they are asked in that order, up front.
+
+    The model starts loading BEFORE the questions rather than after. Loading takes the better part
+    of a minute, and there is no reason to spend it watching a console: ask while it loads, and by
+    the time the last box is drawn it is usually ready. Same total work, most of the waiting gone.
+    """
     import subprocess
     from . import server
     proc = ov = None
     try:
         base = a.base_url
         if not base:
-            m, mp = _choose_model(a)
+            m, mp = _choose_model(a)                                    # 1. which model
             proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
             base = "http://127.0.0.1:%d/v1" % a.server_port
-            print("waiting for it to answer a question about a picture...")
+        font = _choose_font(a)                                          # 2. which font
+        band = _band(a)                                                 # 3. which part of screen
+        if proc:
+            print("\nwaiting for the model to answer a question about a picture...")
             server.wait_until_it_can_see(base, a.model, proc=proc)
             print("ready.\n")
-        font = _choose_font(a)
         ov = subprocess.Popen([sys.executable, "-u", "-m", "gamesubs", "overlay",
                                "--port", str(a.port)]
                               + (["--font", font] if font else [])
                               + (["--in-capture"] if a.in_capture else []))
         print("overlay opened -- drag it onto the game, then Ctrl+Alt+L to lock it.\n")
-        return _loop(a, base)
+        return _loop(a, base, band)
     finally:
         # Both are children of this process and would otherwise outlive it: a window polling a
         # dead port, and a model sitting on the GPU.

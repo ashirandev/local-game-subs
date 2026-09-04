@@ -30,16 +30,43 @@ def _sct():
 
 
 def _band(a):
+    """Which strip of screen to watch, in order: --region, then the box you dragged, then a
+    sensible default across the bottom.
+
+    The selector opens by itself the first time, because the alternative is a tool that starts,
+    watches the wrong part of the screen, and says nothing about it.
+    """
+    from . import server
     with _sct()() as sct:
         mons = sct.monitors
         if a.monitor >= len(mons):
             raise SystemExit("monitor %d does not exist (found %d)" % (a.monitor, len(mons) - 1))
         m = dict(mons[a.monitor])
-    region = [int(x) for x in a.region.split(",")] if a.region else None
+        virtual = dict(mons[0])              # every monitor, so the box can be dragged anywhere
+
+    region = None
+    if a.region:
+        region = [int(x) for x in a.region.split(",")]
+    else:
+        saved = server.load_region()
+        want = getattr(a, "select", False) or (saved is None and not getattr(a, "no_select", False))
+        if want:
+            from .region import select
+            got = select(virtual, saved)
+            if got:
+                server.save_region(got)
+                region = list(got)
+                print("box saved -- it will be used from now on. Change it with --select.")
+            elif saved:
+                region = list(saved)         # cancelled: keep the one that was already there
+        elif saved:
+            region = list(saved)
+
     b = Band(m, region, a.frac, a.wfrac)
     r = b.rect
-    print("band: %dx%d at (%d,%d) on monitor %d"
-          % (r["width"], r["height"], r["left"], r["top"], a.monitor))
+    print("band: %dx%d at (%d,%d)%s"
+          % (r["width"], r["height"], r["left"], r["top"],
+             "" if region else "   (default strip -- run with --select to draw your own)"))
     return b
 
 
@@ -313,6 +340,10 @@ def main(argv=None):
         q.add_argument("--off-ticks", type=int, default=3, help="empty ticks before clearing")
         q.add_argument("--interval", type=float, default=1 / 12.0,
                        help="seconds between looks. Default 12 fps")
+        q.add_argument("--select", action="store_true",
+                       help="draw the capture box on screen, replacing the saved one")
+        q.add_argument("--no-select", action="store_true",
+                       help="never open the box selector; use the saved box or the default strip")
 
     def model(q, with_server=True):
         q.add_argument("--base-url", default=None,

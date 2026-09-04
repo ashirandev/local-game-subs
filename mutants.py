@@ -21,7 +21,7 @@ import sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src", "gamesubs")
 TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py",
-         "test_no_phone_home.py", "test_overlay.py"]
+         "test_no_phone_home.py", "test_overlay.py", "test_region.py"]
 
 # (file, what it says now, what the mutant makes it say, what the mutant breaks)
 MUTANTS = [
@@ -101,6 +101,13 @@ MUTANTS = [
      "a lone projector stops being paired, so a normal one-model folder refuses to start"),
     ("server.py", "    elif len(weights) == 1:", "    elif True:",
      "several models silently resolve to whichever sorts first, instead of asking"),
+    ("region.py", "return min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0)",
+     "return x0, y0, x1 - x0, y1 - y0",
+     "dragging up or left selects nothing, and says nothing about it"),
+    ("region.py", 'return l + virtual["left"], t + virtual["top"], w, h', "return l, t, w, h",
+     "the box is right on one monitor and off by a screen width on two"),
+    ("server.py", "and r[2] > 0 and r[3] > 0", "and True",
+     "a zero-width saved box is accepted and then never sees anything"),
     ("service.py", 'ThreadingHTTPServer(("127.0.0.1", port), H)',
      'ThreadingHTTPServer(("0.0.0.0", port), H)',
      "what is on your screen becomes readable from the rest of the network"),

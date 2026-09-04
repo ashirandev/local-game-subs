@@ -88,6 +88,48 @@ def home(sub=""):
     return d
 
 
+SETTINGS = "settings.json"
+
+
+def load_settings():
+    """Whatever was saved last time, or {} -- a missing or broken file is not worth an error."""
+    try:
+        with open(os.path.join(app_dir(), SETTINGS), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_settings(d):
+    """Write via a temp file and replace, so an interruption cannot leave a half-written file.
+
+    A truncated settings.json is worse than none: the tool would start ignoring a box the user
+    chose, with nothing on screen to say why.
+    """
+    p = os.path.join(app_dir(), SETTINGS)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, p)
+
+
+def load_region():
+    """The saved capture box as (left, top, width, height), or None."""
+    r = load_settings().get("region")
+    if isinstance(r, list) and len(r) == 4 and all(isinstance(v, int) for v in r) \
+            and r[2] > 0 and r[3] > 0:
+        return tuple(r)
+    return None
+
+
+def save_region(box):
+    d = load_settings()
+    d["region"] = [int(v) for v in box]
+    save_settings(d)
+    return d["region"]
+
+
 def find_server(explicit=None):
     """Locate llama-server. Returns a path or None."""
     if explicit:

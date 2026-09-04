@@ -16,7 +16,7 @@ import os
 import tkinter as tk
 from tkinter import ttk
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from . import render
 
@@ -25,6 +25,10 @@ FG = "#e8eaed"
 DIM = "#9aa0a6"
 ACCENT = "#3fa7ff"
 PREVIEW_BG = "#1d2126"
+
+# Drawn under every candidate as a second opinion. Chosen because it was checked by eye on words
+# where a tone mark stacks on a vowel, and it places them correctly without a text shaper.
+REFERENCE = "LeelawUI"
 
 
 def _label(path):
@@ -70,7 +74,10 @@ def choose(fonts_dir, sample=None, size=30, current=None):
 
     labels = [_label(p) + ("   (fonts folder)" if p in infolder else "") for p in paths]
     by_label = dict(zip(labels, paths))
-    start = labels[0]
+    # Start on something known to work, so a person who does not look closely still gets a font
+    # that draws their language correctly.
+    start = next((lab for lab, q in zip(labels, paths)
+                  if os.path.basename(q).lower().startswith(REFERENCE.lower())), labels[0])
     if current:
         for lab, p in by_label.items():
             if os.path.basename(p).lower() == os.path.basename(current).lower():
@@ -85,11 +92,36 @@ def choose(fonts_dir, sample=None, size=30, current=None):
     canvas.pack(padx=20, pady=(0, 6))
     keep = {}
 
+    reference = render.resolve_font(REFERENCE, sample, fonts_dir)
+
     def refresh(*_):
+        """Draw the candidate, and a font known to place marks correctly, one above the other.
+
+        Side by side is the whole trick. Four automatic checks for "are the marks in the right
+        place" were written and all four were wrong -- they agree on every font, correct or not,
+        because the mark IS drawn either way, just at the wrong height. Put the same word in two
+        fonts one line apart and the difference is obvious in half a second, with no metric at all.
+
+        This exists because it went wrong for real: the picker allowed a font that draws เพื่อ with
+        the tone mark collapsed onto the vowel, the small preview did not make that visible, and it
+        was only caught by reading the subtitles in a live game.
+        """
         p = by_label[var.get()]
-        im = render.draw_line(sample, "", render.load(p, size), render.load(p, 18), 900)
-        flat = Image.new("RGB", (max(im.width + 24, 560), im.height + 24), PREVIEW_BG)
-        flat.paste(im, ((flat.width - im.width) // 2, 12), im)
+        rows = [("this font", p)]
+        if reference and os.path.basename(reference).lower() != os.path.basename(p).lower():
+            rows.append(("known good", reference))
+        ims = [(tag, render.draw_line(sample, "", render.load(q, size), render.load(q, 16), 900))
+               for tag, q in rows]
+        w = max(im.width for _, im in ims) + 130
+        h = sum(im.height for _, im in ims) + 16 * len(ims) + 8
+        flat = Image.new("RGB", (max(w, 600), h), PREVIEW_BG)
+        d = ImageDraw.Draw(flat)
+        small = render.load(reference or p, 13)
+        y = 8
+        for tag, im in ims:
+            d.text((10, y + im.height // 2 - 8), tag, font=small, fill="#9aa0a6")
+            flat.paste(im, (120, y), im)
+            y += im.height + 16
         keep["img"] = ImageTk.PhotoImage(flat)
         canvas.configure(image=keep["img"])
 

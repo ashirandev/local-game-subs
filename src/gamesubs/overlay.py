@@ -40,6 +40,9 @@ from . import render
 from .server import app_dir, home
 
 POLL_MS = 150
+# How long the service may be unreachable before this window gives up and closes itself.
+# Long enough to sit through a restart, short enough that a stranded overlay is not permanent.
+ORPHAN_S = 40.0
 KEY = "#0b0c0d"        # chroma key: these pixels vanish entirely (Windows)
 STATE = os.path.join(app_dir(), "overlay-position.json")
 IS_WIN = sys.platform == "win32"
@@ -174,6 +177,14 @@ class Overlay:
 
     # ---------------------------------------------------------------- data
     def _poll(self):
+        """Read /current forever, and close the window if the service is gone for good.
+
+        A short outage is a restart and must not take the window with it. A long one means the
+        thing that opened this window is not coming back -- and an overlay that outlives its
+        service is a piece of text stuck on top of everything with no visible way to remove it.
+        That happened: cancelling out of setup left "drag me, then Ctrl+Alt+L" on the screen.
+        """
+        gone = 0.0
         while True:
             try:
                 req = urllib.request.Request(self.url, headers={"Cache-Control": "no-store"})
@@ -181,14 +192,22 @@ class Overlay:
                     d = json.loads(r.read().decode("utf-8", "replace"))
                 self.line = {"speaker": (d.get("speaker") or "").strip(),
                              "text": (d.get("text") or "").strip()}
+                gone = 0.0
             except Exception:
-                pass                     # a service restart must not take the window with it
+                gone += POLL_MS / 1000.0
+                if gone > ORPHAN_S:
+                    print("the translator is gone -- closing the overlay.")
+                    try:
+                        self.root.after(0, self.root.destroy)
+                    except Exception:
+                        pass
+                    return
             threading.Event().wait(POLL_MS / 1000.0)
 
     def _render(self):
         spk, txt = self.line["speaker"], self.line["text"]
         if not txt and not self.locked:
-            spk, txt = "", "— drag me, then Ctrl+Alt+L —"
+            spk, txt = "", "— drag me · Ctrl+Alt+L to lock · Ctrl+Alt+Q to quit —"
         key = (spk, txt)
         if key != self._shown:
             self._shown = key

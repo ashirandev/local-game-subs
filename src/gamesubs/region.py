@@ -70,7 +70,7 @@ def select(virtual, existing=None):
     cv.pack(fill="both", expand=True)
 
     out = {"box": None}
-    drag = {"x": 0, "y": 0, "rect": None, "label": None}
+    drag = {"x": 0, "y": 0, "rect": None, "label": None, "done": None}
 
     hint = cv.create_text(
         virtual["width"] // 2, 40, fill="#e8eaed", font=("Segoe UI", 15, "bold"),
@@ -103,6 +103,15 @@ def select(virtual, existing=None):
             return                       # a click, not a drag: keep whatever was there
         draw(l, t, w, h)
         out["box"] = to_screen((l, t, w, h), virtual)
+        # The instruction has to be NEXT TO THE BOX, not in the banner at the top of the screen.
+        # On a multi-monitor desktop that banner can be on a different physical screen from the
+        # one being dragged on, so it is read once at the start and never seen again -- which
+        # leaves someone who has just drawn a box with nothing telling them to press Enter.
+        if drag["done"]:
+            cv.delete(drag["done"])
+        drag["done"] = cv.create_text(
+            l + w / 2, t + h + 26, fill="#e8eaed", font=("Segoe UI", 14, "bold"),
+            text="Press ENTER to use this box     ·     drag again to redo     ·     Esc to cancel")
 
     def accept(*_):
         if out["box"]:

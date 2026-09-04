@@ -113,7 +113,14 @@ class VisionClient:
         body = {"model": self.model,
                 "messages": [{"role": "user", "content": content}],
                 "max_tokens": max_tokens,
-                "temperature": temperature}
+                "temperature": temperature,
+                # Reasoning off, per request as well as on the server. For a one-line subtitle
+                # the model's thinking is most of the work: 2.5 s per line with it against 0.6 s
+                # without, on the same model and card. It never errors and the answers stay
+                # correct, so nothing points at it -- the tool is just four times too slow to
+                # keep up with dialogue. `/no_think` is a Qwen token and is literal text to
+                # other models; this is the portable way to ask.
+                "chat_template_kwargs": {"enable_thinking": False}}
         if schema is not None:
             # Ask for constrained output. Servers that support it become far more reliable to
             # parse; servers that do not will ignore this key, which is why the fallback below

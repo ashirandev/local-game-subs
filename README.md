@@ -24,22 +24,37 @@ anything. There is no injection, no memory reading, no modding — the game does
 | **OS** | Windows for the click-through overlay. The capture and translation halves are cross-platform |
 | **Python** | 3.8 or newer |
 
-**A GPU is the requirement, and here is why** — same five test images, same model, same answers,
-only the llama.cpp build changed. Measured on this machine with `gamesubs check`:
+**What the hardware actually buys you** — same five test images, same model, same answers, only
+the llama.cpp build changed. Measured on this machine with `gamesubs check`:
 
-| build | seconds per line | read verbatim | invented a line | download |
-|---|---|---|---|---|
-| **CUDA** (RTX 5070 Ti) | **0.6** (0.6–0.7) | 4/4 | no | 515 MB |
-| **Vulkan** (same card) | **3.6** (2.3–5.8) | 4/4 | no | 34 MB |
-| **CPU only** (28 cores) | **18.2** (14.5–21.2) | 4/4 | no | 18 MB |
+| build | seconds per line | read verbatim | download |
+|---|---|---|---|
+| **CUDA** (RTX 5070 Ti) | **0.6** | 4/4 | 515 MB |
+| **Vulkan** (same card) | **0.7** | 4/4 | 34 MB |
+| **CPU only** (28 cores) | **3.0** | 4/4 | 18 MB |
 
-**All three read every line correctly. Only the speed changes.** That is the whole decision: a
-subtitle is on screen for two or three seconds, so at 3.6 s the translation lands after the line
-has gone, and at 18 s it may as well not exist. Nothing here makes the model *worse* at reading —
-it makes it late, which for subtitles is the same as wrong.
+All three read every line correctly; only the speed moves. `setup` installs the **Vulkan** build:
+a tenth of a second slower than CUDA, fifteen times smaller, works on AMD and Intel too, and never
+has to match a CUDA runtime version to your driver. `--backend cuda` if you want that tenth back.
 
-So `setup` picks CUDA when it finds an NVIDIA card and Vulkan otherwise, and `--backend` overrides
-it. I would have shipped Vulkan by default on the size alone; the measurement said no.
+CPU-only works and is honestly marginal: at 3 s the translation lands just as the line is leaving
+the screen. Fine for a slow story game, frustrating in anything brisk.
+
+### That table was wrong the first time, and the way it was wrong is the interesting part
+
+The first run of it said CUDA 0.6, **Vulkan 3.6**, **CPU 18.2** — and on that basis `setup` shipped
+CUDA by default, downloading 515 MB where 34 would do. The numbers were real. The comparison was
+not: every arm was measured with the model's *reasoning* left switched on, and for a one-line
+subtitle the thinking is most of the work. Turn it off and CUDA barely moves while Vulkan goes
+3.6 → 0.7 and the CPU goes 18.2 → 3.0.
+
+Two things worth taking from it. **A variable that affects every arm can still change the ranking
+between them**, so "same conditions" is not enough — the conditions have to be *right*. And the
+mistake was invisible: nothing errored, every answer was correct in every arm, and the wrong
+conclusion was a confident one backed by real measurements.
+
+It was caught only because a user following this README would have gotten 2.6 s where the README
+claimed 0.6, and that gap had to be explained rather than shrugged at.
 
 ---
 
@@ -232,6 +247,12 @@ budget thinking and return `content: ""` with the thinking in `reasoning_content
 field "so something comes back" scores the model's monologue instead of its answer, and the run
 looks healthy while measuring nothing. `vision.py` raises instead.
 
+**Switch the model's reasoning off, twice.** Once as a server flag, once per request — either
+can override the other. With it on, the model writes out its thinking before answering, and for a
+one-line subtitle that thinking is most of the work: **2.5 s per line against 0.6 s**, same model,
+same card. Nothing errors and every answer stays correct, so nothing points at it. The tool is
+simply four times too slow to keep up with dialogue.
+
 **Latest-only, never a queue.** If a new line appears while one is being read, the waiting frame
 is *dropped*. A subtitle delivered after the character stopped talking is worse than none, and a
 queue drifts further behind with every line — which presents as the model getting slower, sending
@@ -261,7 +282,7 @@ string literals, or a `}` inside the translated line ends the object early.
 
 Measured with `gamesubs check`, on gemma-4 E4B Q4_K_M, RTX 5070 Ti 16 GB:
 
-- **0.6 s per line** on the CUDA build, **3.6 s** on Vulkan, **18.2 s** on the CPU
+- **0.6 s per line** on the CUDA build, **0.7 s** on Vulkan, **3.0 s** on the CPU
 - **4 of 4** rendered subtitles read verbatim and translated into natural Thai, on **all three**
 - **1 of 1** frame with no dialogue correctly returned empty, rather than inventing a line
 - **4.85 GB** of VRAM, model + projector + 8k context
@@ -292,15 +313,15 @@ python tests/test_server.py      # download, resume, checksums, asset picking
 python tests/test_no_phone_home.py  # nothing in the play path can reach the internet
 ```
 
-100 tests, no network, no GPU, about a second.
+102 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 26 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **26/26 killed.** The first two on the list are the threshold bug above, which
+makes 28 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **28/28 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
 
 Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as

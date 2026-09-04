@@ -64,19 +64,19 @@ def cmd_setup(a):
     """Everything needed to run, in one command: llama.cpp, then the model."""
     from . import server
     exe = server.find_server(a.llama_server)
+    if exe and a.backend != "auto" and server.backend_of(exe) != a.backend:
+        exe = None            # asked for a specific build and this is not it -- fetch that one
     if exe:
         print("llama-server already here: %s\n" % exe)
     else:
-        backend = a.backend
-        if backend == "auto":
-            # Measured, not assumed: on this machine the CUDA build reads a line in 0.6 s and the
-            # Vulkan build takes 3.6 s for the same five images and the same answers. A subtitle
-            # is on screen for two or three seconds, so that difference is not "a bit slower",
-            # it is "arrives after the line is gone". CUDA wherever there is an NVIDIA card;
-            # Vulkan is the fallback that works on any GPU.
-            backend = "cuda" if server.has_nvidia() else "vulkan"
-            print("no NVIDIA card detected -- using the Vulkan build.\n" if backend == "vulkan"
-                  else "NVIDIA card detected -- using the CUDA build (about 6x faster here).\n")
+        # Vulkan for everyone, and this reversed once. The first comparison put CUDA at 0.6 s a
+        # line and Vulkan at 3.6 s, which looked decisive -- but both arms were measured with the
+        # model's reasoning left on, and that turned out to dominate everything else. With it off:
+        # CUDA 0.6 s, Vulkan 0.7 s. A tenth of a second, for a download fifteen times smaller
+        # that also works on AMD and Intel and never has to match a CUDA runtime to a driver.
+        # The lesson is not about backends: two arms differing in a variable neither of them is
+        # about will happily produce a confident, wrong architectural decision.
+        backend = "vulkan" if a.backend == "auto" else a.backend
         exe = server.fetch_llama(backend)
         print("llama-server: %s\n" % exe)
     server.fetch_model(a.dir)

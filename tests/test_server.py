@@ -223,6 +223,14 @@ class Flags(unittest.TestCase):
         self.assertEqual(int(server.FLAGS[i + 1]), server.IMG_UB)
         self.assertEqual(int(server.FLAGS[server.FLAGS.index("-b") + 1]), server.IMG_UB)
 
+    def test_reasoning_is_switched_off_on_the_server(self):
+        # Worth 4x. With reasoning on, the model writes out its thinking before answering, and for
+        # a one-line subtitle that thinking is most of the work: 2.5 s per line against 0.6 s,
+        # same model, same card. It never errors and the answers stay right, so nothing points at
+        # it -- the tool is just four times too slow to keep up with dialogue.
+        i = server.FLAGS.index("--reasoning")
+        self.assertEqual(server.FLAGS[i + 1], "off")
+
     def test_the_image_floor_is_not_pinned_to_the_ceiling(self):
         # Pinning the floor up forces small images to the maximum, which roughly doubled a read
         # on a path with a deadline -- that does not make it slow, it makes it blank.

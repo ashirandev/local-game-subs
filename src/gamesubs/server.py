@@ -42,7 +42,14 @@ IMG_UB = IMG_CEIL + 32          # derived, never a literal -- see the note above
 
 FLAGS = ["-c", "8192", "-np", "1", "-ngl", "99", "-fa", "on",
          "-b", str(IMG_UB), "-ub", str(IMG_UB),
-         "--image-min-tokens", str(IMG_FLOOR), "--image-max-tokens", str(IMG_CEIL)]
+         "--image-min-tokens", str(IMG_FLOOR), "--image-max-tokens", str(IMG_CEIL),
+         # Leaving this out cost 4x. With reasoning on, the model writes out its thinking before
+         # it answers, and for a one-line subtitle that thinking is most of the work: measured
+         # 2.5 s per line with it, 0.6 s without, same model, same card, same everything else.
+         # It never errors and the answers stay correct, so nothing points at it -- the tool is
+         # simply four times too slow to keep up with dialogue. Set on the server here AND per
+         # request in vision.py, because either one alone can be overridden by the other.
+         "--reasoning", "off"]
 
 WINDOWS = sys.platform == "win32"
 EXE = "llama-server.exe" if WINDOWS else "llama-server"
@@ -64,9 +71,26 @@ def find_server(explicit=None):
         return on_path
     for d in (home("llama.cpp"), os.path.join(os.path.expanduser("~"), "llama.cpp"),
               r"C:\llama.cpp" if WINDOWS else "/usr/local/bin"):
-        p = os.path.join(d, EXE)
-        if os.path.isfile(p):
-            return p
+        if not os.path.isdir(d):
+            continue
+        for base, _, files in os.walk(d):
+            if EXE in files:
+                return os.path.join(base, EXE)
+    return None
+
+
+def backend_of(exe):
+    """Which build an existing llama-server came from, read from the folder it was unpacked into.
+
+    Worth knowing, and not otherwise knowable: a Vulkan build and a CUDA build are the same
+    filename and the same version string, and on this machine they differ by SIX TIMES in speed.
+    An already-installed server is skipped by setup, so without this a slow build stays in place
+    silently and the tool just feels sluggish for no visible reason.
+    """
+    parts = os.path.normpath(exe).lower().split(os.sep)
+    for b in BACKENDS:
+        if b in parts:
+            return b
     return None
 
 
@@ -96,9 +120,13 @@ def verify(path, expected, label):
     got = sha256_of(path)
     if expected and got != expected.lower():
         os.remove(path)
-        raise SystemExit("%s failed its checksum and was deleted.\n  expected %s\n  got      %s\n"
-                         "  Run setup again. If it keeps happening, download by hand from the "
-                         "links in the README." % (label, expected, got))
+        raise SystemExit(
+            "%s did not match the checksum the publisher lists, so it was deleted.\n"
+            "  expected %s\n  got      %s\n"
+            "  Usually this means the download was interrupted in a way that could not be\n"
+            "  resumed, or that a file of the same name from somewhere else was already in that\n"
+            "  folder -- a different build of the same model has a different hash. Run setup\n"
+            "  again to fetch a clean copy." % (label, expected, got))
     print("    sha256 %s%s" % (got, "  (matches the publisher)" if expected else ""))
     return got
 
@@ -298,7 +326,12 @@ def fetch_llama(backend="vulkan", dest_dir=None):
         raise SystemExit("unknown backend %r. Pick one of: %s"
                          % (backend, ", ".join(sorted(BACKENDS))))
     rel = _latest_build()
-    d = dest_dir or home("llama.cpp")
+    # One folder per backend. Same filename, same version string, six times the speed between
+    # them -- so which build this is has to be readable from somewhere, and the path is the one
+    # place that survives unzipping.
+    d = dest_dir or os.path.join(home("llama.cpp"), backend)
+    if not os.path.isdir(d):
+        os.makedirs(d)
     names = {a["name"]: a["browser_download_url"] for a in rel["assets"]}
     todo = pick_assets(sorted(names), backend)
     if not todo:

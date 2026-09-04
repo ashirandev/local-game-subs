@@ -92,6 +92,14 @@ class Wire(unittest.TestCase):
         self.vc.ask("hi")
         self.assertIsInstance(REPLY["seen"][0]["messages"][0]["content"], str)
 
+    def test_every_request_asks_for_reasoning_to_be_off(self):
+        # The server flag can be overridden per request and vice versa, so both have to say it.
+        # This is a 4x difference that produces no error and no wrong answers -- only a tool too
+        # slow to keep up with dialogue, which is very hard to trace back to a missing key.
+        REPLY["body"] = answer("ok")
+        self.vc.ask("hi")
+        self.assertEqual(REPLY["seen"][0]["chat_template_kwargs"]["enable_thinking"], False)
+
     def test_empty_content_raises_instead_of_returning_nothing(self):
         REPLY["body"] = answer("")
         with self.assertRaises(EmptyAnswer):

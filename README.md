@@ -224,6 +224,45 @@ python -m gamesubs play --min-ink 900 --change 40
 
 ---
 
+## How it captures your screen
+
+Through **[mss](https://github.com/BoboTiG/python-mss)**, which on Windows is a thin wrapper over
+GDI's `BitBlt` + `CreateDIBSection` — the same call the Print Screen key uses. No driver, no
+injection, no hook into the game. The game cannot tell it is happening, and there is nothing to
+be flagged by anti-cheat, because nothing touches the game at all.
+
+It copies **only the band**, not the whole screen. Measured on a 1792x360 strip of a 1440p
+monitor:
+
+| | median | worst of 60 |
+|---|---|---|
+| copy the band out of the screen | 14.0 ms | 16.8 ms |
+| decide whether the text changed | 2.7 ms | 7.0 ms |
+| **total per tick** | **16.7 ms** | |
+
+At 12 ticks a second there are 83 ms to spend, so this uses about **20%** of one core's time and
+nothing else. The model only runs when the gate says the text changed, which on real dialogue is
+a few times a minute rather than twelve times a second.
+
+### The one thing that can stop it working
+
+GDI capture **cannot see a game running in true fullscreen (exclusive) mode** — it comes back
+black, or as your desktop. This is a property of the capture API, not a bug here, and it takes ten
+seconds to check: while `play` is running, open **http://127.0.0.1:8914/snap** in a browser. That
+is the exact image being sent to the model.
+
+- black or frozen → set the game to **Borderless Windowed**, which is what most games default to
+  now and costs nothing in performance
+- your desktop instead of the game → same fix
+- the game, but the subtitles are outside the box → `--region` or `--wfrac`, see `tune`
+
+Why not something faster? DXGI Desktop Duplication (`dxcam`) and Windows Graphics Capture both
+handle exclusive fullscreen and are quicker. They are also extra dependencies with their own
+failure modes, and at 20% of one core there is nothing here worth optimising: the model takes 0.6
+seconds, the capture takes 0.014. Making the cheap half faster would not move the total.
+
+---
+
 ## The part worth reading: when to spend a model call
 
 A vision call takes about a second. Firing one per frame is not slow, it is broken. So the only

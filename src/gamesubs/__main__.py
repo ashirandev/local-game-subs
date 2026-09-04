@@ -316,6 +316,18 @@ def cmd_play(a):
                 p.terminate()
 
 
+def cmd_fonts(a):
+    """Draw the same line in every installed candidate, so the choice is made by looking."""
+    from .fonts import SAMPLE, show
+    rows = show(a.sample or SAMPLE, a.size)
+    print("\n%-24s %8s  %s" % ("font", "width", "drawing it itself?"))
+    for fam, w, own in rows:
+        print("  %-22s %6d  %s" % (fam, w, "yes" if own else "no -- Windows is substituting"))
+    print("\nEqual widths mean the same fallback in both, so those are not really being used.\n"
+          "Of the rest, only your eyes can say whether the marks sit where they belong.")
+    return 0
+
+
 def cmd_overlay(a):
     from .overlay import Overlay
     Overlay("http://127.0.0.1:%d/current" % a.port, font=a.font, size=a.size,
@@ -394,6 +406,11 @@ def main(argv=None):
     model(r, with_server=False)
     output(r)
     r.set_defaults(fn=cmd_run)
+
+    f = sub.add_parser("fonts", help="compare fonts on your own screen and pick one by eye")
+    f.add_argument("--sample", default=None, help="the line to draw; defaults to a Thai one")
+    f.add_argument("--size", type=int, default=28)
+    f.set_defaults(fn=cmd_fonts)
 
     o = sub.add_parser("overlay", help="the on-screen window alone")
     o.add_argument("--port", type=int, default=8914)

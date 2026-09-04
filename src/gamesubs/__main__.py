@@ -48,6 +48,24 @@ def _grab(sct, rect):
     return np.asarray(sct.grab(rect))[:, :, :3][:, :, ::-1]      # BGRA -> RGB
 
 
+def _choose_model(a):
+    """Which weights and projector to load.
+
+    The dropdown appears only when there is a decision to make. With one model in the folder it
+    starts straight away -- a dialog whose list has a single entry is just a click to lose.
+    """
+    from . import server
+    d = server.home("models")
+    weights, _ = server.list_models(d)
+    if getattr(a, "model_file", None) or getattr(a, "no_pick", False) or len(weights) <= 1:
+        return server.resolve_model(getattr(a, "model_file", None), d)
+    from .picker import choose
+    got = choose(d)
+    if not got:
+        raise SystemExit("no model chosen.")
+    return got
+
+
 def _jpg(rgb, max_width=1280, quality=88):
     from PIL import Image
     im = Image.fromarray(rgb)
@@ -122,7 +140,8 @@ def cmd_check(a):
     try:
         base = a.base_url
         if not base:
-            proc = server.start(exe=a.llama_server, port=a.server_port)
+            m, mp = _choose_model(a)
+            proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
             base = "http://127.0.0.1:%d/v1" % a.server_port
             print("waiting for it to answer a question about a picture...")
             server.wait_until_it_can_see(base, a.model, proc=proc)
@@ -251,7 +270,8 @@ def cmd_play(a):
     try:
         base = a.base_url
         if not base:
-            proc = server.start(exe=a.llama_server, port=a.server_port)
+            m, mp = _choose_model(a)
+            proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
             base = "http://127.0.0.1:%d/v1" % a.server_port
             print("waiting for it to answer a question about a picture...")
             server.wait_until_it_can_see(base, a.model, proc=proc)
@@ -303,6 +323,10 @@ def main(argv=None):
         if with_server:
             q.add_argument("--llama-server", default=None, help="path to llama-server")
             q.add_argument("--server-port", type=int, default=8080)
+            q.add_argument("--model-file", default=None,
+                           help="filename of the .gguf to use, from the models folder")
+            q.add_argument("--no-pick", action="store_true",
+                           help="never show the model chooser, even with several models")
 
     def output(q):
         q.add_argument("--port", type=int, default=8914)

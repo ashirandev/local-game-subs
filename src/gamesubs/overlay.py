@@ -42,7 +42,10 @@ POLL_MS = 150
 KEY = "#0b0c0d"        # chroma key: these pixels vanish entirely (Windows)
 PLATE = "#000000"      # the subtitle backing. Must stay clear of KEY -- a plate that drifts to
                        # the key colour becomes invisible, which looks like the subtitle broke.
-STATE = os.path.join(os.path.expanduser("~"), ".local-game-subs-pos.json")
+from .server import app_dir
+
+# Beside everything else this tool keeps, so that deleting the folder really is a full uninstall.
+STATE = os.path.join(app_dir(), "overlay-position.json")
 IS_WIN = sys.platform == "win32"
 
 # Ordered by preference. The first one present AND carrying the script's glyphs wins.

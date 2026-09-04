@@ -20,7 +20,7 @@ anything. There is no injection, no memory reading, no modding — the game does
 | | |
 |---|---|
 | **GPU** | ~6 GB of free VRAM. Measured use with the model, its vision projector and an 8k context: **4.85 GB** |
-| **Disk** | 5.7 GB for the model |
+| **Disk** | about 6.5 GB, all of it inside the program's own folder |
 | **OS** | Windows for the click-through overlay. The capture and translation halves are cross-platform |
 | **Python** | 3.8 or newer |
 
@@ -101,6 +101,7 @@ Then, in increasing order of effort:
 | | |
 |---|---|
 | **There is no program of mine to trust** | It is about 2,000 lines of Python. No compiled binary is shipped from this repo — you can read every line, and GitHub shows you every change |
+| **It cannot spread into your system** | Its Python packages go into a `.venv` inside the folder, never into your system Python. Nothing touches your registry, your PATH, or your home folder. Delete the folder and every trace is gone |
 | **The one binary is not mine either** | `llama-server` comes from [llama.cpp](https://github.com/ggml-org/llama.cpp)'s official release page, a project with tens of thousands of users. Run it through [VirusTotal](https://www.virustotal.com/) if you like |
 | **Every download is checksummed** | Against a SHA-256 published **by the same host that serves the file** — Hugging Face's API for the model, GitHub's release metadata for llama.cpp. A file that does not match is deleted, not warned about. No hash is hardcoded in this repo, because a hash I typed in would only prove the file matches what *I* downloaded |
 | **The no-phone-home test** | `python tests/test_no_phone_home.py` reads the source and fails if any module in the play path contains a URL pointing anywhere but your own machine, or if the local service binds to anything other than `127.0.0.1` |
@@ -116,11 +117,52 @@ page is the one to actually do — pull the network and watch it keep working.
 
 ---
 
+## Everything lives in one folder
+
+Unzip it wherever you like. `setup.bat` puts everything it needs *beside itself*:
+
+```
+local-game-subs   setup.bat  play.bat        <- what you double-click
+   .venv\                     <- a private Python, so your system Python is untouched
+   models\                    <- the model and its vision projector
+   llama.cpp\                 <- the program that runs the model
+   src\  tests```
+
+Nothing is written to your home folder, your registry, or your system Python. **Uninstalling is
+deleting the folder**, and that really is all of it — no 6 GB left behind in a hidden directory
+after the tool that put it there is gone.
+
+Move the folder anywhere and it keeps working. Want the big files somewhere else — a second
+drive, or shared between two copies? Set `GAMESUBS_HOME` to that path.
+
+---
+
+## Using a different model
+
+`models\` is a drop box. Put any vision GGUF in it **together with its `mmproj-*.gguf`
+projector**, and it appears in a dropdown the next time you start:
+
+```
+Which model should read your screen?
+  [ gemma-4-E4B-it-Q4_K_M.gguf   (4.6 GB)          v ]
+    projector: mmproj-BF16.gguf
+```
+
+With one model in the folder there is no dialog — it just starts. Pick from the command line
+instead with `--model-file <name>`, or skip the dialog entirely with `--no-pick`.
+
+A vision model is always **two files**. Get them from the same place, and note that a model with
+no projector beside it is offered but cannot be started: without one the server loads happily,
+answers questions about text, and then fails on every single frame.
+
+---
+
 ## Quick start
 
 **No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
-unzip it, and double-click **`setup.bat`**. It installs the three Python packages, downloads
-llama.cpp and the model, and runs the check. Then double-click **`play.bat`**.
+unzip it, and double-click **`setup.bat`**. It builds a private Python inside the folder, installs
+the three packages it needs into that, downloads llama.cpp and the model, and runs the check.
+Then double-click **`play.bat`**.
 
 If you would rather use the command line:
 
@@ -322,15 +364,15 @@ python tests/test_overlay.py     # the window, and why it must be invisible to c
 python tests/test_no_phone_home.py  # nothing in the play path can reach the internet
 ```
 
-111 tests, no network, no GPU, about a second.
+123 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 29 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **29/29 killed.** The first two on the list are the threshold bug above, which
+makes 32 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **32/32 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
 
 Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as

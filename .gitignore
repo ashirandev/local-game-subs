@@ -9,3 +9,9 @@ venv/
 .idea/
 .vscode/
 band.png
+
+# everything the tool installs into its own folder
+.venv/
+models/
+llama.cpp/
+overlay-position.json

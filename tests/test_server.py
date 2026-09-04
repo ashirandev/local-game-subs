@@ -213,6 +213,100 @@ class PickAssets(unittest.TestCase):
         self.assertEqual(server.pick_assets(["cudart-llama-bin-win-cuda-13.3-x64.zip"], "cuda"), [])
 
 
+class OneFolder(unittest.TestCase):
+    """Everything the tool installs lives beside the scripts, so uninstalling is deleting it."""
+
+    def test_the_app_folder_is_the_repo_not_your_home_directory(self):
+        d = server.app_dir()
+        self.assertNotIn(".local-game-subs", d)
+        self.assertTrue(os.path.isfile(os.path.join(d, "setup.bat"))
+                        or os.path.isfile(os.path.join(d, "pyproject.toml")))
+
+    def test_downloads_land_inside_it(self):
+        for sub in ("models", "llama.cpp"):
+            self.assertEqual(os.path.dirname(server.home(sub)), server.app_dir())
+
+    def test_an_env_var_can_move_the_whole_lot(self):
+        old = os.environ.get("GAMESUBS_HOME")
+        os.environ["GAMESUBS_HOME"] = self.d = tempfile.mkdtemp()
+        try:
+            self.assertEqual(server.app_dir(), self.d)
+        finally:
+            if old is None:
+                del os.environ["GAMESUBS_HOME"]
+            else:
+                os.environ["GAMESUBS_HOME"] = old
+            shutil.rmtree(self.d, ignore_errors=True)
+
+
+class ChooseModel(unittest.TestCase):
+    """The models folder is a drop box: any vision GGUF plus its projector should just work."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def touch(self, *names):
+        for n in names:
+            io.open(os.path.join(self.d, n), "wb").write(b"x")
+
+    def test_projectors_are_not_offered_as_models(self):
+        self.touch("gemma-4-E4B-it-Q4_K_M.gguf", "mmproj-BF16.gguf")
+        weights, proj = server.list_models(self.d)
+        self.assertEqual(weights, ["gemma-4-E4B-it-Q4_K_M.gguf"])
+        self.assertEqual(proj, ["mmproj-BF16.gguf"])
+
+    def test_non_gguf_files_are_ignored(self):
+        self.touch("model.gguf", "mmproj.gguf", "readme.txt", "notes.md")
+        self.assertEqual(server.list_models(self.d)[0], ["model.gguf"])
+
+    def test_a_single_pair_needs_no_choosing(self):
+        self.touch("gemma-4-E4B-it-Q4_K_M.gguf", "mmproj-BF16.gguf")
+        m, p = server.resolve_model(None, self.d)
+        self.assertTrue(m.endswith("gemma-4-E4B-it-Q4_K_M.gguf"))
+        self.assertTrue(p.endswith("mmproj-BF16.gguf"))
+
+    def test_the_right_projector_is_paired_with_each_model(self):
+        # The failure this prevents is quiet: a mismatched projector starts fine, answers text,
+        # and reads pictures out of nothing -- which looks like a bad model, not a bad pairing.
+        self.touch("gemma-4-E4B-it-Q4_K_M.gguf", "mmproj-gemma-4-E4B-it-BF16.gguf",
+                   "Qwen3-VL-8B-Q4_K_M.gguf", "mmproj-Qwen3-VL-8B-F16.gguf")
+        self.assertIn("gemma", os.path.basename(
+            server.resolve_model("gemma-4-E4B-it-Q4_K_M.gguf", self.d)[1]).lower())
+        self.assertIn("qwen", os.path.basename(
+            server.resolve_model("Qwen3-VL-8B-Q4_K_M.gguf", self.d)[1]).lower())
+
+    def test_one_projector_serves_whichever_model_is_picked(self):
+        self.touch("a-Q4_K_M.gguf", "b-Q4_K_M.gguf", "mmproj-BF16.gguf")
+        self.assertTrue(server.resolve_model("b-Q4_K_M.gguf", self.d)[1].endswith("mmproj-BF16.gguf"))
+
+    def test_several_models_and_no_choice_refuses_rather_than_guessing(self):
+        self.touch("a-Q4_K_M.gguf", "b-Q4_K_M.gguf", "mmproj-BF16.gguf")
+        with self.assertRaises(SystemExit) as e:
+            server.resolve_model(None, self.d)
+        self.assertIn("more than one", str(e.exception))
+
+    def test_a_model_with_no_projector_is_refused_with_the_reason(self):
+        self.touch("lonely-Q4_K_M.gguf")
+        with self.assertRaises(SystemExit) as e:
+            server.resolve_model(None, self.d)
+        self.assertIn("two files", str(e.exception))
+
+    def test_an_empty_folder_says_where_to_put_things(self):
+        with self.assertRaises(SystemExit) as e:
+            server.resolve_model(None, self.d)
+        self.assertIn("setup", str(e.exception))
+        self.assertIn(self.d, str(e.exception))
+
+    def test_an_unknown_name_lists_what_is_there(self):
+        self.touch("a-Q4_K_M.gguf", "mmproj-BF16.gguf")
+        with self.assertRaises(SystemExit) as e:
+            server.resolve_model("typo.gguf", self.d)
+        self.assertIn("a-Q4_K_M.gguf", str(e.exception))
+
+
 class Flags(unittest.TestCase):
     def test_the_batch_size_is_derived_from_the_image_ceiling(self):
         # One image must fit a single ubatch. If someone raises the ceiling and leaves the batch

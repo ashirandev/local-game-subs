@@ -55,8 +55,34 @@ WINDOWS = sys.platform == "win32"
 EXE = "llama-server.exe" if WINDOWS else "llama-server"
 
 
+def app_dir():
+    """The one folder this tool keeps everything in.
+
+    Everything it downloads -- the model, its projector, llama.cpp -- lands beside the scripts you
+    double-click, so uninstalling is deleting the folder. Nothing is written to your home
+    directory, your registry, or anywhere else, and nothing is left behind.
+
+    That matters more than it sounds: 5.7 GB parked in a hidden folder under your home directory,
+    after you have deleted the tool that put it there, is the kind of thing you find two years
+    later while hunting for disk space.
+
+    Falls back to `~/.local-game-subs` only when the package is installed somewhere unwritable,
+    which is what a `pip install` into system site-packages looks like. `GAMESUBS_HOME` overrides
+    both.
+    """
+    env = os.getenv("GAMESUBS_HOME")
+    if env:
+        return env
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    marker = any(os.path.isfile(os.path.join(root, f))
+                 for f in ("setup.bat", "pyproject.toml", "README.md"))
+    if marker and os.access(root, os.W_OK):
+        return root
+    return os.path.join(os.path.expanduser("~"), ".local-game-subs")
+
+
 def home(sub=""):
-    d = os.path.join(os.path.expanduser("~"), ".local-game-subs", sub)
+    d = os.path.join(app_dir(), sub)
     if not os.path.isdir(d):
         os.makedirs(d)
     return d
@@ -222,6 +248,79 @@ def local_model(dest_dir=None):
     d = dest_dir or home("models")
     m, p = os.path.join(d, MODEL_FILE), os.path.join(d, MMPROJ_FILE)
     return (m, p) if os.path.isfile(m) and os.path.isfile(p) else (None, None)
+
+
+def _tokens(name):
+    out, cur = [], ""
+    for ch in os.path.basename(name).lower():
+        if ch.isalnum():
+            cur += ch
+        elif cur:
+            out.append(cur)
+            cur = ""
+    if cur:
+        out.append(cur)
+    return [t for t in out if t not in ("gguf", "it", "bf16", "f16", "f32")]
+
+
+def match_projector(weight, projectors):
+    """Pick the projector that belongs to a given model file.
+
+    A vision model is two files, and they must be from the same model. Pairing them wrongly is
+    not a loud failure: the server starts, answers text, and then reads pictures out of nothing --
+    which looks like a bad model rather than a bad pairing.
+
+    Matched on shared name fragments rather than on order, because a folder people drop files
+    into has no order. One projector and one model is the common case and needs no cleverness;
+    the scoring is for the folder with three of each in it.
+    """
+    if not projectors:
+        return None
+    if len(projectors) == 1:
+        return projectors[0]
+    want = set(_tokens(weight))
+    best = max(projectors, key=lambda p: (len(want & set(_tokens(p))), -len(p)))
+    return best if want & set(_tokens(best)) else None
+
+
+def list_models(dest_dir=None):
+    """(weights, projectors) found in the models folder. Anything a user dropped in counts."""
+    d = dest_dir or home("models")
+    try:
+        files = sorted(f for f in os.listdir(d) if f.lower().endswith(".gguf"))
+    except OSError:
+        return [], []
+    proj = [f for f in files if "mmproj" in f.lower()]
+    return [f for f in files if f not in proj], proj
+
+
+def resolve_model(choice=None, dest_dir=None):
+    """(model_path, projector_path) for `choice`, or for the only candidate. Raises if unclear."""
+    d = dest_dir or home("models")
+    weights, projectors = list_models(d)
+    if not weights:
+        raise SystemExit(
+            "no model files found in\n  %s\n"
+            "Run `python -m gamesubs setup` to download one, or drop any vision GGUF in that\n"
+            "folder together with its mmproj-*.gguf projector." % d)
+    if choice:
+        hit = [w for w in weights if w == choice or os.path.basename(choice) == w]
+        if not hit:
+            raise SystemExit("no model called %r in %s. Found: %s"
+                             % (choice, d, ", ".join(weights)))
+        weight = hit[0]
+    elif len(weights) == 1:
+        weight = weights[0]
+    else:
+        raise SystemExit("more than one model in %s -- pick one with --model-file:\n  %s"
+                         % (d, "\n  ".join(weights)))
+    proj = match_projector(weight, projectors)
+    if not proj:
+        raise SystemExit(
+            "found %s but no projector to go with it.\n"
+            "A vision model is two files: the weights and an mmproj-*.gguf. Without the second\n"
+            "one the server starts, answers text, and fails on every picture." % weight)
+    return os.path.join(d, weight), os.path.join(d, proj)
 
 
 def _probe_png():

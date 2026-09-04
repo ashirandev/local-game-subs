@@ -93,6 +93,37 @@ class Download(unittest.TestCase):
         server.download(self.url, self.p, "file.bin")
         self.assertEqual(io.open(self.p, "rb").read(), BODY)
 
+    def test_a_matching_checksum_passes(self):
+        import hashlib
+        server.download(self.url, self.p, "file.bin", hashlib.sha256(BODY).hexdigest())
+        self.assertTrue(os.path.isfile(self.p))
+
+    def test_a_wrong_checksum_deletes_the_file_and_refuses(self):
+        # Deleted, not warned about: a corrupt 5 GB model left on disk gets used, and then fails
+        # later as something that looks like a model problem rather than a download problem.
+        with self.assertRaises(SystemExit) as e:
+            server.download(self.url, self.p, "file.bin", "00" * 32)
+        self.assertFalse(os.path.isfile(self.p))
+        self.assertIn("checksum", str(e.exception))
+
+    def test_an_already_complete_file_is_still_checksummed(self):
+        # The resume path must not become a way to keep a corrupt file: if the bytes are already
+        # there, they still have to be the right bytes.
+        io.open(self.p, "wb").write(BODY)
+        with self.assertRaises(SystemExit):
+            server.download(self.url, self.p, "file.bin", "00" * 32)
+
+    def test_no_checksum_available_still_downloads_and_prints_one(self):
+        # A hash we could not fetch is a reason to show the user the hash, not a reason to refuse
+        # to install.
+        server.download(self.url, self.p, "file.bin", None)
+        self.assertEqual(io.open(self.p, "rb").read(), BODY)
+
+    def test_sha256_of_matches_hashlib(self):
+        import hashlib
+        io.open(self.p, "wb").write(BODY)
+        self.assertEqual(server.sha256_of(self.p), hashlib.sha256(BODY).hexdigest())
+
     def test_no_content_length_is_refused_not_guessed(self):
         # Without a size there is no way to tell a finished download from a truncated one, and
         # guessing produces a corrupt model that fails much later with an unrelated error.

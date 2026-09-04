@@ -21,6 +21,8 @@ The numbers in FLAGS are not guesses either:
                               COMPUTED from the ceiling, never written beside it -- otherwise
                               raising one and forgetting the other is a silent quality drop.
 """
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -72,7 +74,36 @@ def _human(n):
     return "%.1f GB" % (n / 1073741824.0) if n >= 1073741824 else "%.0f MB" % (n / 1048576.0)
 
 
-def download(url, dest, label):
+def sha256_of(path, chunk=1 << 22):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def verify(path, expected, label):
+    """Check a downloaded file against a hash the PUBLISHER gave us, and delete it if it differs.
+
+    The hash never comes from this repository. Hugging Face reports it as `lfs.oid` and GitHub as
+    the release asset's `digest`, both over HTTPS from the same host that serves the file. A
+    checksum I typed into this file would only prove the file matches what I downloaded once --
+    it would tell you nothing about whether I am trustworthy, which is the actual question.
+
+    Deleting on mismatch rather than warning: a corrupt 5 GB model that stays on disk gets used,
+    and it fails later as something that looks like a model problem.
+    """
+    got = sha256_of(path)
+    if expected and got != expected.lower():
+        os.remove(path)
+        raise SystemExit("%s failed its checksum and was deleted.\n  expected %s\n  got      %s\n"
+                         "  Run setup again. If it keeps happening, download by hand from the "
+                         "links in the README." % (label, expected, got))
+    print("    sha256 %s%s" % (got, "  (matches the publisher)" if expected else ""))
+    return got
+
+
+def download(url, dest, label, sha256=None):
     """Resumable download with a progress line. Refuses to guess at a missing size."""
     have = os.path.getsize(dest) if os.path.isfile(dest) else 0
     req = urllib.request.Request(url, headers={"User-Agent": "local-game-subs"})
@@ -83,6 +114,7 @@ def download(url, dest, label):
     except urllib.error.HTTPError as e:
         if e.code == 416 and have:
             print("  %s already complete (%s)" % (label, _human(have)))
+            verify(dest, sha256, label)
             return dest
         raise
     total = r.headers.get("Content-Length")
@@ -119,7 +151,24 @@ def download(url, dest, label):
     if got != total:
         raise SystemExit("%s ended at %s, expected %s -- run setup again to resume."
                          % (label, _human(got), _human(total)))
+    verify(dest, sha256, label)
     return dest
+
+
+def hf_checksums():
+    """Hugging Face's own SHA-256 for each file, from its API. {} if the call fails.
+
+    Empty rather than fatal on failure: a checksum you cannot fetch is a reason to show the hash
+    and let the user compare it, not a reason to refuse to install.
+    """
+    try:
+        req = urllib.request.Request("https://huggingface.co/api/models/%s/tree/main" % REPO,
+                                     headers={"User-Agent": "local-game-subs"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            tree = json.load(r)
+    except Exception:
+        return {}
+    return {f["path"]: (f.get("lfs") or {}).get("oid") for f in tree if (f.get("lfs") or {}).get("oid")}
 
 
 def fetch_model(dest_dir=None):
@@ -127,10 +176,16 @@ def fetch_model(dest_dir=None):
     d = dest_dir or home("models")
     print("downloading %s into %s" % (REPO, d))
     print("(about 5.7 GB in total -- it resumes if you stop it)\n")
-    m = download("%s/%s" % (BASE, MODEL_FILE), os.path.join(d, MODEL_FILE), MODEL_FILE)
+    sums = hf_checksums()
+    if not sums:
+        print("  (could not fetch checksums from Hugging Face -- the hashes below are still\n"
+              "   printed, compare them against the file listing on the model page)\n")
+    m = download("%s/%s" % (BASE, MODEL_FILE), os.path.join(d, MODEL_FILE), MODEL_FILE,
+                 sums.get(MODEL_FILE))
     # The projector is a SEPARATE file. Without it the server starts, answers text, and fails on
     # the first image -- which is why it is downloaded here rather than left as a footnote.
-    p = download("%s/%s" % (BASE, MMPROJ_FILE), os.path.join(d, MMPROJ_FILE), MMPROJ_FILE)
+    p = download("%s/%s" % (BASE, MMPROJ_FILE), os.path.join(d, MMPROJ_FILE), MMPROJ_FILE,
+                 sums.get(MMPROJ_FILE))
     return m, p
 
 
@@ -252,9 +307,12 @@ def fetch_llama(backend="vulkan", dest_dir=None):
                          % (rel["tag_name"], backend, os.linesep,
                             (os.linesep + "  ").join(sorted(names)), os.linesep, rel["html_url"]))
     print("llama.cpp %s, %s build" % (rel["tag_name"], backend))
+    # GitHub reports each asset's own sha256 in the release metadata, so the binary is checked
+    # against the same host that published it.
+    digests = {a["name"]: (a.get("digest") or "").replace("sha256:", "") for a in rel["assets"]}
     for n in todo:
         z = os.path.join(d, n)
-        download(names[n], z, n)
+        download(names[n], z, n, digests.get(n) or None)
         with zipfile.ZipFile(z) as zf:
             zf.extractall(d)
         os.remove(z)

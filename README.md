@@ -65,6 +65,42 @@ small enough to leave the GPU to the game.
 
 ---
 
+## "Is this a virus?"
+
+Fair question. It watches your screen, it has `.bat` files, and it downloads a program and runs
+it. You should want an answer, and it should be one you can check rather than one you have to
+believe.
+
+**What it does with your screen:** every 1/12th of a second it copies one strip near the bottom
+of your monitor, and *only* when the text in that strip changes does it send that strip to a
+language model **running on your own PC**. The reply is drawn in the overlay. Nothing is uploaded,
+nothing is saved. (`tune` writes `band.png` so you can check the crop; that file stays on your
+disk and is overwritten each tick.)
+
+**The check that settles it, and it takes ten seconds:** run `setup` once, then **turn off your
+internet** and run `play`. It works exactly the same. A screen-reader that keeps working with the
+network unplugged is not sending your screen anywhere.
+
+Then, in increasing order of effort:
+
+| | |
+|---|---|
+| **There is no program of mine to trust** | It is about 2,000 lines of Python. No compiled binary is shipped from this repo — you can read every line, and GitHub shows you every change |
+| **The one binary is not mine either** | `llama-server` comes from [llama.cpp](https://github.com/ggml-org/llama.cpp)'s official release page, a project with tens of thousands of users. Run it through [VirusTotal](https://www.virustotal.com/) if you like |
+| **Every download is checksummed** | Against a SHA-256 published **by the same host that serves the file** — Hugging Face's API for the model, GitHub's release metadata for llama.cpp. A file that does not match is deleted, not warned about. No hash is hardcoded in this repo, because a hash I typed in would only prove the file matches what *I* downloaded |
+| **The no-phone-home test** | `python tests/test_no_phone_home.py` reads the source and fails if any module in the play path contains a URL pointing anywhere but your own machine, or if the local service binds to anything other than `127.0.0.1` |
+
+**Windows will still warn you**, and it is right to: nothing here is code-signed, because a
+certificate costs a few hundred dollars a year and this is free. You will see SmartScreen on the
+`.bat` files and possibly on `llama-server.exe`. That warning means "unsigned", not "malicious" —
+but it also means *don't take my word for it*, so the checks above are the point.
+
+**The honest limit of the test:** it reads string literals, so it proves no URL is written down.
+It cannot prove one is not assembled at runtime from pieces. That is why the first check on this
+page is the one to actually do — pull the network and watch it keep working.
+
+---
+
 ## Quick start
 
 **No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
@@ -252,18 +288,19 @@ my card, and yours are different. The tool's job is to hand you your own.
 python tests/test_capture.py     # the mask, the downscale, the gate, rendered-text fixtures
 python tests/test_vision.py      # the model client, against a real HTTP server
 python tests/test_service.py     # the job slot, the hold timer, what /current publishes
-python tests/test_server.py      # download, resume, asset picking, the vision flags
+python tests/test_server.py      # download, resume, checksums, asset picking
+python tests/test_no_phone_home.py  # nothing in the play path can reach the internet
 ```
 
-88 tests, no network, no GPU, about a second.
+100 tests, no network, no GPU, about a second.
 
 ```bash
 python mutants.py
 ```
 
 A green suite proves the tests ran, not that they would go red if the code were wrong. `mutants.py`
-makes 23 plausible edits — several of them things this code used to say — and checks each one
-turns a test red. **23/23 killed.** The first two on the list are the threshold bug above, which
+makes 26 plausible edits — several of them things this code used to say — and checks each one
+turns a test red. **26/26 killed.** The first two on the list are the threshold bug above, which
 survived two earlier versions of the suite.
 
 Writing that runner turned up a bug of its own worth passing on: a mutant the **same length** as

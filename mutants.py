@@ -20,7 +20,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src", "gamesubs")
-TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py"]
+TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py",
+         "test_no_phone_home.py"]
 
 # (file, what it says now, what the mutant makes it say, what the mutant breaks)
 MUTANTS = [
@@ -83,6 +84,13 @@ MUTANTS = [
     # deleted rather than papered over with a test written to catch them.)
     ("server.py", "if out and runtime:", "if runtime:",
      "a release with only the runtime looks like a usable download: 373 MB, no llama-server"),
+    ("server.py", "        os.remove(path)", "        pass",
+     "a file that fails its checksum is left on disk and gets used anyway"),
+    ("server.py", "    if expected and got != expected.lower():", "    if False:",
+     "checksums are computed and then not compared to anything"),
+    ("service.py", 'ThreadingHTTPServer(("127.0.0.1", port), H)',
+     'ThreadingHTTPServer(("0.0.0.0", port), H)',
+     "what is on your screen becomes readable from the rest of the network"),
 ]
 
 

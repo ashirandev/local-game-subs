@@ -185,8 +185,16 @@ the strip being watched, so its own line would be read as a new subtitle and tra
 again. Print Screen, OBS and Steam's screenshot key all see the game without it. **A phone camera
 sees it fine.**
 
-If you *want* it in your recording — for streaming — start with `play.bat --in-capture`, and then
-keep the overlay outside the box you dragged.
+**If you want it in your recording**, tick **Show in OBS and recordings** in the settings
+window. It applies straight away, with OBS already running.
+
+One switch, two changes, because either one alone is a broken recording:
+
+1. it stops hiding from screen capture, so OBS sees it
+2. it moves the plate **above** the box, so the tool is not reading its own translation
+
+The plate keeps the same centre line, only higher, and it will not go off the top of the
+screen if your box is near the edge. `play.bat --in-capture` still works and always wins.
 
 ### "Nothing appears at all"
 

@@ -140,7 +140,7 @@ class NoFeedbackLoop(unittest.TestCase):
 
     def test_it_is_applied_after_the_window_exists(self):
         # There is no window handle before the window is created, so this cannot run in __init__.
-        self.assertIn("_hide_from_capture(not self.in_capture)", CODE)
+        self.assertIn("_hide_from_capture(not self.record)", CODE)
 
     def test_a_failure_to_hide_tells_you_what_to_do(self):
         # On Windows before 2004 the call fails, and then the loop is real. Silence there would

@@ -120,11 +120,17 @@ class TheOverlayNoticesTheSliderMoved(unittest.TestCase):
         def __init__(self, size=28, stamp=(1, 1)):
             self.size, self._stamp, self.sized = size, stamp, []
             self.font_path = "x.ttf"
+            self.record = False
+            self.in_capture = False
+            self.hidden = []
             self.colours = (server.TUNING["text_colour"], server.TUNING["plate_colour"])
 
         def _set_size(self, n):
             self.size = n
             self.sized.append(n)
+
+        def _hide_from_capture(self, on):
+            self.hidden.append(on)
 
     def run_retune(self, fake, stamp, font=None, **tune):
         """Drive _retune with the two things it reads from outside itself stubbed out."""
@@ -173,6 +179,29 @@ class TheOverlayNoticesTheSliderMoved(unittest.TestCase):
         f = self.Fake()
         self.run_retune(f, (5, 5), font=None)
         self.assertEqual(f.font_path, "x.ttf")
+
+    def test_ticking_record_stops_hiding_from_capture(self):
+        """The whole point of the switch: OBS sees nothing until this happens, and the
+        person has no way to tell why."""
+        f = self.Fake()
+        self.assertTrue(self.run_retune(f, (6, 6), record=True))
+        self.assertTrue(f.record)
+        self.assertEqual(f.hidden, [False], "the capture flag was never cleared")
+
+    def test_and_forces_a_redraw_so_the_move_happens_now(self):
+        """Without it the plate stays inside the box until the game says something else,
+        which is exactly the window in which it reads its own output."""
+        f = self.Fake()
+        f._shown = ("a", "b")
+        self.run_retune(f, (7, 7), record=True)
+        self.assertIsNone(f._shown)
+
+    def test_the_command_line_flag_still_wins(self):
+        """--in-capture was there first and is what the docs tell streamers to use."""
+        f = self.Fake()
+        f.in_capture = True
+        self.run_retune(f, (8, 8), record=False)
+        self.assertTrue(f.record)
 
     def test_the_render_throws_away_what_is_on_screen_when_it_does(self):
         """Otherwise the cache says "same line, already drawn" and the new size never appears
@@ -227,7 +256,8 @@ class ThePanelAndTheSettingsAgree(unittest.TestCase):
             self.assertIn(key, server.TUNING)
 
     def test_every_number_has_a_range(self):
-        self.assertEqual(sorted(list(server.LIMITS) + list(server.CHOICES)),
+        self.assertEqual(sorted(list(server.LIMITS) + list(server.CHOICES)
+                                + list(server.SWITCHES)),
                          sorted(server.TUNING))
 
     def test_the_defaults_are_inside_their_own_ranges(self):

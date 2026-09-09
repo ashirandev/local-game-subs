@@ -29,8 +29,9 @@ judge without watching one.
 > 📷 **Why there is no screenshot of it over a real game:** the overlay hides itself from
 > screen capture on purpose. It sits in the strip being watched, so a recording of it would
 > be read as a new subtitle and translated again. Print Screen, OBS and Steam's screenshot
-> key all see the game without it; a phone camera sees it fine. Streaming? `--in-capture`,
-> and keep the overlay outside the box.
+> key all see the game without it; a phone camera sees it fine. Recording or streaming? Tick
+> **Show in OBS and recordings** in the settings window — it stops the hiding *and* moves
+> the plate above the box, because doing only the first makes the tool read its own output.
 
 **👉 If you just want to use it: [GUIDE.md](GUIDE.md)** — download to subtitles in five minutes,
 with pictures, no command line. The rest of this page is how it works and how it was measured.

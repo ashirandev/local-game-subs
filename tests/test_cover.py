@@ -133,14 +133,14 @@ class TheBoxDecidesTheWrap(unittest.TestCase):
 class ThePlateIsCentredInTheBox(unittest.TestCase):
     """`Overlay._place`: why the plate does not jump about when the sentence changes length."""
 
-    def place(self, size, box=BOX, moved=False):
+    def place(self, size, box=BOX, moved=False, record=False):
         calls = []
 
         class Fake(object):
             pass
 
         f = Fake()
-        f.box, f._moved = box, moved
+        f.box, f._moved, f.record = box, moved, record
         f.root = type("R", (), {"geometry": lambda _self, g: calls.append(g)})()
         overlay.Overlay._place(f, size)
         return calls
@@ -156,6 +156,25 @@ class ThePlateIsCentredInTheBox(unittest.TestCase):
     def test_that_centre_is_the_box(self):
         self.assertAlmostEqual(self.centre(self.place((200, 90))[0], 200),
                                BOX["left"] + BOX["width"] / 2.0, delta=1)
+
+    def test_recording_mode_puts_it_above_the_box(self):
+        """Recording stops this window hiding from screen capture, and the window sits in
+        the strip being watched -- so left where it is, the tool reads its own translation
+        and translates that. The move is the other half of the same switch."""
+        g = self.place((400, 90), record=True)[0]
+        top = int(g.split("+")[2])
+        self.assertLess(top + 90, BOX["top"], "the plate is still inside the watched box")
+
+    def test_and_keeps_the_same_centre(self):
+        """Only the height changes. A plate that also jumps sideways when you tick a box
+        for OBS reads as two settings, not one."""
+        self.assertAlmostEqual(self.centre(self.place((400, 90), record=True)[0], 400),
+                               self.centre(self.place((400, 90))[0], 400), delta=1)
+
+    def test_a_box_at_the_top_of_the_screen_does_not_go_off_it(self):
+        top_box = {"left": 100, "top": 10, "width": 900, "height": 120}
+        g = self.place((400, 90), box=top_box, record=True)[0]
+        self.assertGreaterEqual(int(g.split("+")[2]), 0)
 
     def test_a_hand_drag_is_never_overruled(self):
         """Once someone has put the window somewhere, re-centring on the next line takes it back

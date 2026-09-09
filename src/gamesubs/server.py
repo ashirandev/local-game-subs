@@ -127,8 +127,16 @@ LIMITS = {"size": (14, 64), "min_hold": (0.0, 5.0), "read_speed": (6.0, 40.0)}
 # process happens to read the other one. The panel writes it through save_font().
 CHOICES = {"model": "", "lang": "Thai",
            "text_colour": "#ffffff", "plate_colour": "#000000"}
+# On/off, stored as JSON booleans. NOT called FLAGS: that name is taken by the
+# llama-server argv list a few lines down, and taking it turned every test that reads
+# those flags into an AttributeError on a dict.
+#
+# `record` is two changes at once and they only make sense together: stop hiding from
+# screen capture, and move the plate off the watched box. Either alone is a broken
+# recording -- invisible, or a feedback loop.
+SWITCHES = {"record": False}
 TUNING = dict(CHOICES, size=DEFAULT_SIZE, min_hold=service.MIN_HOLD,
-              read_speed=service.READ_SPEED)
+              read_speed=service.READ_SPEED, **SWITCHES)
 
 # What the panel offers. Any #rrggbb is accepted from the file -- these are just the swatches.
 TEXT_SWATCHES = ["#ffffff", "#ffe27a", "#a8e6a1", "#9fd8ff", "#ffb0b0"]
@@ -156,6 +164,9 @@ def clamp_tuning(d):
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             continue
         out[k] = type(TUNING[k])(max(lo_hi[0], min(lo_hi[1], v)))
+    for k in SWITCHES:
+        if isinstance(d.get(k), bool):
+            out[k] = d[k]
     for k in CHOICES:
         v = d.get(k)
         if not isinstance(v, str) or len(v) > 400:

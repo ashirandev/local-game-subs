@@ -51,6 +51,7 @@ POLL_MS = 150
 # How long the service may be unreachable before this window gives up and closes itself.
 # Long enough to sit through a restart, short enough that a stranded overlay is not permanent.
 ORPHAN_S = 40.0
+RECORD_GAP = 16        # pixels between the plate and the box it must stay out of
 KEY = "#0b0c0d"        # chroma key: these pixels vanish entirely (Windows)
 STATE = os.path.join(app_dir(), "overlay-position.json")
 IS_WIN = sys.platform == "win32"
@@ -99,6 +100,7 @@ class Overlay:
         self.font_path = path
         self._stamp = settings_stamp()
         self.colours = (saved["text_colour"], saved["plate_colour"])
+        self.record = bool(saved["record"]) or in_capture
         self._set_size(saved["size"] if size is None else size)
         print("font: %s" % os.path.basename(path))
 
@@ -118,7 +120,7 @@ class Overlay:
         self.root.after(80, self._hotkeys)
         self.root.after(POLL_MS, self._render)
         # Both of these need a window handle, which does not exist until after __init__.
-        self.root.after(50, lambda: self._hide_from_capture(not self.in_capture))
+        self.root.after(50, lambda: self._hide_from_capture(not self.record))
         self.root.after(60, lambda: self._click_through(True))
 
     # ---------------------------------------------------------------- position
@@ -286,8 +288,18 @@ class Overlay:
         if not box or self._moved:
             return
         w, h = size
-        self.root.geometry("+%d+%d" % (int(box["left"]) + (int(box["width"]) - w) // 2,
-                                       int(box["top"]) + (int(box["height"]) - h) // 2))
+        x = int(box["left"]) + (int(box["width"]) - w) // 2
+        if self.record:
+            # ABOVE the box, not on it. Recording mode stops hiding this window from
+            # screen capture, and the window sits in the strip being watched -- so left
+            # where it is, the tool reads its own translation, calls it a new subtitle,
+            # and translates that. Seen in the very first end-to-end run. Moving it out
+            # of the box is the other half of the same setting, which is why they are one
+            # switch and not two.
+            y = max(0, int(box["top"]) - h - RECORD_GAP)
+        else:
+            y = int(box["top"]) + (int(box["height"]) - h) // 2
+        self.root.geometry("+%d+%d" % (x, y))
 
     def _set_size(self, size):
         """Point the renderer at a new text size. The small face is the speaker label."""
@@ -323,6 +335,12 @@ class Overlay:
             self.font_path = path
             self._set_size(d["size"])
             return True
+        want_record = bool(d["record"]) or self.in_capture
+        if want_record != self.record:
+            self.record = want_record
+            self._hide_from_capture(not want_record)
+            self._shown = None      # force a redraw so the move takes effect now
+            moved = True
         if d["size"] != self.size:
             self._set_size(d["size"])
             moved = True

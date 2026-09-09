@@ -120,6 +120,10 @@ class Panel:
         self.font_var = self._dropdown(wrap, "Font", [self._name(p) for p in self.fonts],
                                        self._name(self.font_path), None, self.pick_font)
 
+        self.record_var = self._checkbox(
+            wrap, "Show in OBS and recordings", self.tune["record"],
+            "also moves the subtitle above the box, so it is not read back")
+
         self.swatch_vars = {}
         self._swatches(wrap, "text_colour", "Text colour", TEXT_SWATCHES)
         self._swatches(wrap, "plate_colour", "Background", PLATE_SWATCHES)
@@ -278,6 +282,19 @@ class Panel:
         var.trace_add("write", lambda *_a: self.pick_lang(var.get()))
         return var
 
+    def _checkbox(self, parent, title, current, note):
+        """One switch for two changes that only make sense together."""
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=(0, 10))
+        var = tk.BooleanVar(value=bool(current))
+        tk.Checkbutton(row, text=title, variable=var, command=self.changed,
+                       bg=BG, fg=FG, selectcolor=CARD, activebackground=BG,
+                       activeforeground=FG, highlightthickness=0, bd=0,
+                       font=("Segoe UI", 10, "bold"), anchor="w").pack(fill="x")
+        tk.Label(row, text=note, bg=BG, fg=DIM, font=("Segoe UI", 8),
+                 anchor="w").pack(fill="x", padx=(22, 0))
+        return var
+
     def _swatches(self, parent, key, title, colours):
         row = tk.Frame(parent, bg=BG)
         row.pack(fill="x", pady=(0, 10))
@@ -308,6 +325,7 @@ class Panel:
         d = {k: v.get() for k, v in self.vars.items()}
         d["model"] = self.model_var.get()
         d["lang"] = self.lang_var.get().strip() or TUNING["lang"]
+        d["record"] = bool(self.record_var.get())
         for k, (var, _b) in self.swatch_vars.items():
             d[k] = var.get()
         return server.clamp_tuning(d)
@@ -364,6 +382,8 @@ class Panel:
         for k, v in TUNING.items():
             if k in self.vars:
                 self.vars[k].set(v)
+            elif k == "record":
+                self.record_var.set(bool(v))
             elif k in self.swatch_vars:
                 self.swatch_vars[k][0].set(v)
                 self._mark(k)

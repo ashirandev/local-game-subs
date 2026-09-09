@@ -487,6 +487,15 @@ half stopped, and with a service you just open `/current` and the answer is ther
 
 ---
 
+## Contact
+
+**Something broken, a question, or an idea** — open an issue. That is the fastest route and
+the answer is then there for whoever hits the same thing next.
+
+**Work enquiries** — ashiran.awork@gmail.com
+
+---
+
 ## Licence
 
 MIT.

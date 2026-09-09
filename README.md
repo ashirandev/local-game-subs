@@ -26,6 +26,12 @@ judge without watching one.
 
 ![the settings window](docs/6-the-dashboard.png)
 
+![the translation above the game's own line](docs/8-over-a-real-game.png)
+
+*Resident Evil 4, with **Show in OBS and recordings** ticked: the translation sits above
+the box, the game's own line stays inside it. Photographed off the monitor, because that
+is what it takes — see below.*
+
 > 📷 **Why there is no screenshot of it over a real game:** the overlay hides itself from
 > screen capture on purpose. It sits in the strip being watched, so a recording of it would
 > be read as a new subtitle and translated again. Print Screen, OBS and Steam's screenshot

@@ -7,17 +7,32 @@ only about using it.
 
 ---
 
-## 1. Set it up — once
+## 1. Get it running — double-click `play.bat`
 
-Press **Code → Download ZIP** at the top of the repository page, unzip it anywhere, and
-double-click **`setup.bat`**.
+Download the ZIP from the top of the repo page, unzip it, and double-click **`play.bat`**.
 
-It builds its own Python inside that folder, downloads the model (about 6 GB) and the program that
-runs it, and then checks that your machine can actually read a subtitle. Everything it installs
-stays in the folder. Deleting the folder uninstalls it completely.
+The first run tells you what it needs and waits:
 
-Leave it until it prints **PASS**. It is resumable — if the download breaks, run it again and it
-picks up where it stopped.
+```
+  This is the first run, so there are two things to fetch before anything can start:
+
+    llama.cpp   the program that runs the model             about 34 MB
+    the model   what reads your screen and translates       about 5.9 GB
+
+  Press ENTER to fetch them now, or type N and press ENTER to cancel:
+```
+
+Press Enter and it fetches both, then starts. **Every run after that starts immediately.**
+The download resumes if you stop it, and everything lands inside that one folder —
+uninstalling is deleting the folder.
+
+You need **Python 3.8 or newer**, installed with *Add Python to PATH* ticked. If it is
+missing, the first run says so and links you to the download.
+
+> `setup.bat` still exists if you would rather fetch everything ahead of time. It is no
+> longer a step you have to know about.
+
+---
 
 ## 2. Start it — double-click `play.bat`
 

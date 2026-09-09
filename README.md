@@ -203,9 +203,14 @@ answers questions about text, and then fails on every single frame.
 ## Quick start
 
 **No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
-unzip it, and double-click **`setup.bat`**. It builds a private Python inside the folder, installs
-the five packages it needs into that, downloads llama.cpp and the model, and runs the check.
-Then double-click **`play.bat`**. Step by step, with pictures: **[GUIDE.md](GUIDE.md)**.
+unzip it, and double-click **`play.bat`**.
+
+On the first run it says what it needs — llama.cpp and the model, about 6 GB — and waits for
+you to press Enter before fetching anything. Then it starts. Every run after that starts
+straight away. It all goes into that one folder, so uninstalling is deleting it.
+
+Step by step, with pictures: **[GUIDE.md](GUIDE.md)**. `setup.bat` is still there if you
+would rather download ahead of time, but you no longer have to find it.
 
 If you would rather use the command line:
 

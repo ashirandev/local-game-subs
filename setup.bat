@@ -43,8 +43,19 @@ if errorlevel 1 (
 )
 echo.
 
-"%VENVPY%" -u -X utf8 -m gamesubs setup %*
+REM play.bat calls this on a first run and then starts immediately, so there is nothing for
+REM a check or a "now press play" message to be useful for. NOT passed through to the
+REM python side, which has never heard of it -- and `shift` would not help, because it does
+REM not change %*.
+set SKIPCHECK=
+if /i "%~1"=="--no-check" (
+  set SKIPCHECK=1
+  "%VENVPY%" -u -X utf8 -m gamesubs setup
+) else (
+  "%VENVPY%" -u -X utf8 -m gamesubs setup %*
+)
 if errorlevel 1 goto done
+if defined SKIPCHECK goto quiet
 
 echo.
 echo Now checking that your machine can actually run it...
@@ -52,7 +63,10 @@ echo.
 "%VENVPY%" -u -X utf8 -m gamesubs check
 
 :done
+if defined SKIPCHECK goto quiet
 echo.
 echo When that says PASS, start a game and double-click play.bat
 echo.
 pause
+
+:quiet

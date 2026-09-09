@@ -338,6 +338,47 @@ def preview(font_path, size, sample, width=560):
 PREFERRED = ["leelawui", "leelawad", "tahoma", "notosansthai", "ibmplexsansthai", "sarabun"]
 
 
+# A short string in each language, used ONLY to ask "can this font draw it". It is not shown to
+# anybody, so it does not have to read well -- it has to be hard. Each one carries the marks that
+# a half-finished font gets wrong: Thai stacks a vowel and a tone on one consonant, Vietnamese
+# stacks a diacritic on an already-accented vowel, and a font that fakes either draws a different
+# word confidently with nothing reporting a problem.
+LANG_SAMPLES = {
+    "thai": "เข้า ซื้อ ที่ ผู้",
+    "vietnamese": "Tiếng Việt nghiêng chuyện",
+    "japanese": "日本語のテスト です",
+    "korean": "한국어 자막 확인",
+    "chinese": "中文字幕測試 简体",
+    "russian": "Русский текст Ё",
+    "ukrainian": "Українська Ї Є",
+    "greek": "Ελληνικά κείμενο",
+    "hebrew": "עברית כתוביות",
+    "arabic": "نص عربي للترجمة",
+    "hindi": "हिन्दी उपशीर्षक",
+    "bengali": "বাংলা সাবটাইটেল",
+    "tamil": "தமிழ் வசனம்",
+    "burmese": "မြန်မာ စာတန်း",
+    "khmer": "ភាសាខ្មែរ",
+    "lao": "ພາສາລາວ",
+    "georgian": "ქართული ტექსტი",
+    "armenian": "Հայերեն ենթագիր",
+}
+
+# Everything else. Latin with the accents that separate a complete font from a half one -- which
+# covers Catalan, Polish, Turkish, Czech, Portuguese and the rest without needing a row each.
+DEFAULT_SAMPLE = "Català Português Türkçe żółw ñ ß æ"
+
+
+def sample_for(lang):
+    """The text a font must be able to draw to be offered for this language. -> str
+
+    An unknown language falls back to the Latin sample rather than to nothing. Nothing would mean
+    "every font qualifies", and the first subtitle would then be a row of empty boxes with no
+    explanation; the Latin sample at least rejects the fonts that are symbols and icons.
+    """
+    return LANG_SAMPLES.get((lang or "").strip().lower(), DEFAULT_SAMPLE)
+
+
 def resolve_font(name_or_path, sample, extra_dir=None):
     """A usable font FILE for `sample`, from a path, a name, or by searching. None if none fits.
 

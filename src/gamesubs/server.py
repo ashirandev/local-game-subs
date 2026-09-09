@@ -125,7 +125,8 @@ LIMITS = {"size": (14, 64), "min_hold": (0.0, 5.0), "read_speed": (6.0, 40.0)}
 # The font is NOT here. It has had its own key since before there was a panel, and a
 # second copy of it would be two answers to one question -- the loser being whichever
 # process happens to read the other one. The panel writes it through save_font().
-CHOICES = {"model": "", "text_colour": "#ffffff", "plate_colour": "#000000"}
+CHOICES = {"model": "", "lang": "Thai",
+           "text_colour": "#ffffff", "plate_colour": "#000000"}
 TUNING = dict(CHOICES, size=DEFAULT_SIZE, min_hold=service.MIN_HOLD,
               read_speed=service.READ_SPEED)
 

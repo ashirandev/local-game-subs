@@ -54,7 +54,9 @@ ORPHAN_S = 40.0
 KEY = "#0b0c0d"        # chroma key: these pixels vanish entirely (Windows)
 STATE = os.path.join(app_dir(), "overlay-position.json")
 IS_WIN = sys.platform == "win32"
-SAMPLE = "เข้า E-Store เพื่อซื้อ"
+# The font test text follows the OUTPUT language, because that is the language the
+# font has to be able to draw. It used to be this string whatever you asked for.
+SAMPLE = render.sample_for(load_tuning().get("lang"))
 
 
 class Overlay:
@@ -313,7 +315,8 @@ class Overlay:
         if want != self.colours:
             self.colours = want
             moved = True
-        path = render.resolve_font(load_font(), SAMPLE, home("fonts"))
+        path = render.resolve_font(load_font(),
+                                   render.sample_for(d.get("lang")), home("fonts"))
         if path and path != self.font_path:
             # A font that cannot draw the language is worse than the wrong font: nothing
             # appears at all. resolve_font has already refused it, so keep what works.

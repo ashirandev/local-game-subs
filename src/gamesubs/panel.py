@@ -37,7 +37,10 @@ from .server import (CHOICES, LIMITS, PLATE_SWATCHES, TEXT_SWATCHES, TUNING, hom
                      load_font, load_tuning, save_font, save_tuning)
 from .service import read_seconds
 
-SAMPLE = "และคืนนั้นเอง แรคคูนซิตี้ก็ถูกล้างจนไม่เหลืออะไร"
+# What the preview shows. The Thai line is the one this tool was built and measured
+# on; for any other language there is nothing true to show, so it shows that
+# language's font-test text rather than a sentence that would be a lie.
+THAI_SAMPLE = "และคืนนั้นเอง แรคคูนซิตี้ก็ถูกล้างจนไม่เหลืออะไร"
 SPEAKER = "Leon"
 PREVIEW_W = 430
 BG = "#1b1b1b"
@@ -61,10 +64,13 @@ class Panel:
         self.launcher = launcher
         self.started = False
         self.tune = load_tuning()
-        self.fonts = candidates(home("fonts")) or []
-        self.font_path = load_font() or render.resolve_font(None, SAMPLE, home("fonts"))
+        self.lang = self.tune["lang"]
+        self.fonts = candidates(home("fonts"), render.sample_for(self.lang)) or []
+        self.font_path = load_font() or render.resolve_font(
+            None, render.sample_for(self.lang), home("fonts"))
         self._img = None
         self._pending = None
+        self.boxes = {}
 
         self.root = tk.Tk()
         self.root.title("Subtitle settings")
@@ -109,6 +115,8 @@ class Panel:
             "takes effect the next time you start")
         self.model_var = self._dropdown(wrap, "Model", self._models(), self.tune["model"],
                                         self.model_note, self.pick_model)
+        self.lang_var = self._textbox(wrap, "Translate into", self.tune["lang"],
+                                      "any language, written as you would say it")
         self.font_var = self._dropdown(wrap, "Font", [self._name(p) for p in self.fonts],
                                        self._name(self.font_path), None, self.pick_font)
 
@@ -245,10 +253,29 @@ class Panel:
                            style="P.TCombobox", height=14)
         box.pack(fill="x")
         box.bind("<<ComboboxSelected>>", lambda _e: on_pick(var.get()))
+        self.boxes[title] = box
         if not values:
             box.configure(state="disabled")
             tk.Label(row, text="nothing found -- drop files in the folder and reopen this window",
                      bg=BG, fg=DIM, font=("Segoe UI", 8), anchor="w").pack(fill="x")
+        return var
+
+    def _textbox(self, parent, title, current, note):
+        """A box you type into, rather than a list somebody else chose for you."""
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", pady=(0, 10))
+        head = tk.Frame(row, bg=BG)
+        head.pack(fill="x")
+        tk.Label(head, text=title, bg=BG, fg=FG,
+                 font=("Segoe UI", 10, "bold")).pack(side="left")
+        tk.Label(head, text=note, bg=BG, fg=DIM,
+                 font=("Segoe UI", 8)).pack(side="right")
+        var = tk.StringVar(value=current)
+        tk.Entry(row, textvariable=var, bg=CARD, fg=FG, insertbackground=FG,
+                 relief="flat", font=("Segoe UI", 10)).pack(fill="x", ipady=4)
+        # Every keystroke, not only on Enter: a language typed and never committed is a
+        # setting the person believes they changed.
+        var.trace_add("write", lambda *_a: self.pick_lang(var.get()))
         return var
 
     def _swatches(self, parent, key, title, colours):
@@ -280,6 +307,7 @@ class Panel:
         """The controls, snapped the way the settings file will store them. -> dict"""
         d = {k: v.get() for k, v in self.vars.items()}
         d["model"] = self.model_var.get()
+        d["lang"] = self.lang_var.get().strip() or TUNING["lang"]
         for k, (var, _b) in self.swatch_vars.items():
             d[k] = var.get()
         return server.clamp_tuning(d)
@@ -301,6 +329,23 @@ class Panel:
         self.tune = save_tuning(self.read())
 
     def pick_model(self, _name):
+        self.changed()
+
+    def pick_lang(self, lang):
+        """A new output language changes which fonts can draw it, and the preview."""
+        if lang.strip().lower() == (self.lang or "").strip().lower():
+            return self.changed()
+        self.lang = lang
+        self.fonts = candidates(home("fonts"), render.sample_for(lang)) or []
+        names = [self._name(p) for p in self.fonts]
+        box = self.boxes.get("Font")
+        if box is not None:
+            box.configure(values=names)
+        if names and self._name(self.font_path) not in names:
+            # The chosen font cannot draw the new language. Keeping it silently means a
+            # screenful of empty boxes and nothing saying why.
+            self.font_path = save_font(self.fonts[0])
+            self.font_var.set(names[0])
         self.changed()
 
     def pick_font(self, name):
@@ -330,7 +375,7 @@ class Panel:
         d = self.read()
         for key, (lab, fmt) in self.value_labels.items():
             lab.configure(text=fmt % d[key])
-        secs = read_seconds(SAMPLE, d["read_speed"], d["min_hold"])
+        secs = read_seconds(THAI_SAMPLE, d["read_speed"], d["min_hold"])
         self.hold_note.configure(
             text="a line this long stays up %.1f s" % secs if secs else
                  "lines clear the moment the game moves on")
@@ -338,7 +383,9 @@ class Panel:
             self.preview.configure(text="no font on this machine can draw it", fg=FG)
             return
         size = int(d["size"])
-        im = render.draw_line(SAMPLE, SPEAKER, render.load(self.font_path, size),
+        thai = (self.lang or "").strip().lower() == "thai"
+        shown = THAI_SAMPLE if thai else render.sample_for(self.lang)
+        im = render.draw_line(shown, SPEAKER, render.load(self.font_path, size),
                               render.load(self.font_path, max(11, int(size * 0.55))), PREVIEW_W,
                               d["text_colour"], d["plate_colour"])
         if im is None:

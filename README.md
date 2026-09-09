@@ -15,6 +15,23 @@ translated in an overlay. One machine. Nothing is uploaded, nothing is stored.
 It works with any game that draws subtitles, because it reads pixels rather than hooking into
 anything. There is no injection, no memory reading, no modding — the game does not know it exists.
 
+![the translated line over the game](docs/3-the-result.png)
+
+*The plate is the size of the sentence and sits on the box you aimed. When nobody is speaking
+there is nothing on screen at all.*
+
+Everything you set is in one window, and it stays open while you play — every control on it
+reaches the subtitle straight away, because a subtitle setting is not something anyone can
+judge without watching one.
+
+![the settings window](docs/6-the-dashboard.png)
+
+> 📷 **Why there is no screenshot of it over a real game:** the overlay hides itself from
+> screen capture on purpose. It sits in the strip being watched, so a recording of it would
+> be read as a new subtitle and translated again. Print Screen, OBS and Steam's screenshot
+> key all see the game without it; a phone camera sees it fine. Streaming? `--in-capture`,
+> and keep the overlay outside the box.
+
 **👉 If you just want to use it: [GUIDE.md](GUIDE.md)** — download to subtitles in five minutes,
 with pictures, no command line. The rest of this page is how it works and how it was measured.
 

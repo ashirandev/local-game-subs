@@ -1,5 +1,7 @@
 # local-game-subs
 
+**🇹🇭 อ่านภาษาไทย → [README.th.md](README.th.md)**
+
 Read a game's subtitles off your own screen with a small local vision model, and show them
 translated in an overlay. One machine. Nothing is uploaded, nothing is stored.
 

@@ -1,0 +1,16 @@
+Drop font files (.ttf or .otf) in here and they become available to the overlay.
+
+Why you might: the subtitle is drawn with whatever font is chosen, and a font without your
+language's glyphs does not refuse to draw -- it shows boxes, or the system quietly substitutes
+another font and the marks that sit above and below letters drift away from them.
+
+Anything in this folder is tried before the fonts installed on the machine. Pick one with:
+
+    python -m gamesubs fonts        see them all drawn, side by side
+    python -m gamesubs play --font "<name or filename>"
+
+Good free ones for Thai: Noto Sans Thai, IBM Plex Sans Thai, Sarabun (all open licences).
+On Windows, Leelawadee UI and Tahoma are already installed and both work.
+
+Nothing is shipped in here on purpose: a font is someone's licensed work, and plenty of the
+good-looking ones may not be redistributed.

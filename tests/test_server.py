@@ -357,5 +357,137 @@ class Flags(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class ASecondModelDoesNotBreakTheFirst(unittest.TestCase):
+    """The folder tells people to drop models in. Doing it used to unpair the one that
+    worked, because upstream ships every gemma-4 projector as `mmproj-BF16.gguf` -- a name
+    with no fragment of the model in it. Rename the new one so the pair is clear, and the
+    OLD model now matches nothing: `resolve_model` refuses to start, and the reason it
+    gives is about a missing projector that is sitting right there."""
+
+    E4B = "gemma-4-E4B-it-Q4_K_M.gguf"
+    E2B = "gemma-4-E2B-it-Q4_K_M.gguf"
+    PROJ = ["mmproj-BF16.gguf", "mmproj-E2B-BF16.gguf"]
+
+    def test_the_named_pair_still_wins(self):
+        self.assertEqual(server.match_projector(self.E2B, self.PROJ, [self.E2B, self.E4B]),
+                         "mmproj-E2B-BF16.gguf")
+
+    def test_and_the_nameless_one_is_left_for_the_model_nothing_else_claims(self):
+        self.assertEqual(server.match_projector(self.E4B, self.PROJ, [self.E2B, self.E4B]),
+                         "mmproj-BF16.gguf")
+
+    def test_two_nameless_projectors_are_still_a_refusal(self):
+        """Elimination needs something to eliminate. Two files that say nothing about which
+        model they belong to is a genuine ambiguity, and guessing it wrong produces a server
+        that answers text and reads pictures out of nothing."""
+        self.assertIsNone(server.match_projector(
+            self.E4B, ["mmproj-BF16.gguf", "mmproj-1.gguf"], [self.E2B, self.E4B]))
+
+    def test_one_projector_needs_no_reasoning_at_all(self):
+        self.assertEqual(server.match_projector(self.E4B, ["mmproj-BF16.gguf"],
+                                                [self.E2B, self.E4B]), "mmproj-BF16.gguf")
+
+    def test_a_real_folder_with_both_models_in_it_resolves_both(self):
+        """The seam. `match_projector` can be perfect and still never be told about the
+        other models -- `resolve_model` is the only caller, and it is the one that has the
+        folder listing. Mutation found this by removing the third argument at the call site
+        while every test of the function itself stayed green."""
+        d = tempfile.mkdtemp()
+        try:
+            for n in (self.E4B, self.E2B) + tuple(self.PROJ):
+                with open(os.path.join(d, n), "wb") as f:
+                    f.write(b"x")
+            self.assertEqual(os.path.basename(server.resolve_model(self.E4B, d)[1]),
+                             "mmproj-BF16.gguf")
+            self.assertEqual(os.path.basename(server.resolve_model(self.E2B, d)[1]),
+                             "mmproj-E2B-BF16.gguf")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_it_behaves_as_before_when_nobody_passes_the_folder(self):
+        """The third argument is optional, and the old two-argument call still means what it
+        meant: no claim, no answer."""
+        self.assertIsNone(server.match_projector(self.E4B, self.PROJ))
+
+
+class TheModelCatalog(unittest.TestCase):
+    """Downloading a second model by hand is a trap, so the tool does it.
+
+    Every gemma-4 projector upstream is called `mmproj-BF16.gguf`. Follow a link, save both
+    files, and the new projector lands on top of the working one -- same name, within a few
+    megabytes of the same size, and the model it belonged to now reads every frame as blank.
+    A URL in a readme cannot prevent that; a table with a `save_as` in it can."""
+
+    def test_every_entry_is_complete(self):
+        for key, e in server.CATALOG.items():
+            for field in ("repo", "weights", "mmproj", "save_as", "gb", "note"):
+                self.assertIn(field, e, "%s is missing %s" % (key, field))
+
+    def test_no_two_models_write_their_projector_to_the_same_name(self):
+        """The whole point. This is the test that stops a third entry being added the
+        obvious way and quietly breaking the two that work."""
+        names = [e["save_as"] for e in server.CATALOG.values()]
+        self.assertEqual(len(names), len(set(names)), names)
+
+    def test_a_saved_projector_still_names_its_own_model(self):
+        """`save_as` has to carry a fragment `match_projector` can pair on, or renaming it
+        has bought nothing. The default keeps the bare upstream name on purpose -- it is the
+        one that wins by elimination."""
+        for key, e in server.CATALOG.items():
+            if key == server.DEFAULT_MODEL:
+                continue
+            self.assertTrue(set(server._tokens(e["weights"])) & set(server._tokens(e["save_as"])),
+                            "%s: %s says nothing about %s" % (key, e["save_as"], e["weights"]))
+
+    def test_the_default_is_what_the_module_constants_say(self):
+        """Those constants are read by `local_model`, by the tests, and by anything that
+        predates the catalog. Two answers to "which model is the default" is one too many."""
+        e = server.CATALOG[server.DEFAULT_MODEL]
+        self.assertEqual((server.REPO, server.MODEL_FILE, server.MMPROJ_FILE),
+                         (e["repo"], e["weights"], e["save_as"]))
+
+    def test_the_projector_lands_under_the_name_the_table_chose(self):
+        """Without the network: what matters is the destination path, and a label in a
+        progress line looks exactly like it in the source. Mutation caught that -- the first
+        version of this mutant changed the printed name and nothing could tell."""
+        seen = []
+        real = server.download
+        server.download = lambda url, dest, label, sha=None: seen.append(dest) or dest
+        try:
+            server.fetch_model(r"C:\tmp\models", "e2b")
+        finally:
+            server.download = real
+        self.assertTrue(seen[-1].endswith("mmproj-E2B-BF16.gguf"), seen)
+
+    def test_asking_for_a_model_that_is_not_there_says_what_is(self):
+        with self.assertRaises(SystemExit) as cm:
+            server.fetch_model(tempfile.gettempdir(), "e9b")
+        self.assertIn("e2b", str(cm.exception))
+
+
+class TheCatalogIsReachableFromTheCommandLine(unittest.TestCase):
+    """A table nobody can see is a worse readme than a readme. The seam again: the catalog
+    can be perfect and still have no command that prints it or downloads from it."""
+
+    @staticmethod
+    def source():
+        return io.open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "src", "gamesubs", "__main__.py"),
+            encoding="utf-8").read()
+
+    def test_setup_can_be_pointed_at_any_of_them(self):
+        body = self.source()
+        self.assertIn('"--model-name"', body)
+        self.assertIn("fetch_model(a.dir", body)
+        self.assertIn("model_name", body[body.index("def cmd_setup("):])
+
+    def test_there_is_a_command_that_prints_the_links(self):
+        body = self.source()
+        i = body.index("def cmd_models(")
+        block = body[i:body.index("def cmd_setup(")]
+        self.assertIn("server.HF", block, "it lists models without saying where they are")
+        self.assertIn("setup --model-name", block)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

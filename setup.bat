@@ -32,9 +32,9 @@ if errorlevel 1 (
 )
 :haveenv
 
-echo Installing the three packages this needs, into .venv only...
+echo Installing the five packages this needs, into .venv only...
 "%VENVPY%" -m pip install --quiet --disable-pip-version-check --upgrade pip
-"%VENVPY%" -m pip install --quiet --disable-pip-version-check mss numpy Pillow
+"%VENVPY%" -m pip install --quiet --disable-pip-version-check mss numpy Pillow uharfbuzz freetype-py
 if errorlevel 1 (
   echo Installing the packages failed. Check your internet connection and run this again.
   echo.

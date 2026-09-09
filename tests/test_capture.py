@@ -12,7 +12,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, __file__.rsplit("tests", 1)[0] + "src")
-from gamesubs.capture import Band, ChangeGate, coarse, ink
+from gamesubs.capture import Band, ChangeGate, coarse, ink, ink_span
 
 
 def band(h=200, w=800, bg=30):
@@ -25,6 +25,43 @@ def band(h=200, w=800, bg=30):
 def put(a, colour, x=100, y=80, w=300, h=40):
     a[y:y + h, x:x + w] = colour
     return a
+
+
+class WhereTheLineIs(unittest.TestCase):
+    """The rows the subtitle occupies -- what the plate is placed on.
+
+    This exists because the plate used to be centred in the box the user dragged, and a person
+    drags a box around WHERE subtitles appear, not around one line of them. The line sits wherever
+    the game puts it inside that box, and on the very first frame anyone looked at closely, that
+    was not the middle.
+    """
+
+    def test_it_finds_the_rows_the_text_is_on(self):
+        a = put(band(), (250, 250, 250), y=120, h=40)
+        self.assertEqual(ink_span(ink(a)), (120, 159))
+
+    def test_one_bright_speck_far_away_does_not_stretch_it(self):
+        """`ink` is a colour filter, not a text detector -- its own docstring says a snow field
+        passes it. Without a density floor a single glint of sky doubles the plate."""
+        a = put(band(), (250, 250, 250), y=120, h=40)
+        a[8, 700] = (255, 255, 255)
+        self.assertEqual(ink_span(ink(a)), (120, 159))
+
+    def test_two_lines_of_dialogue_are_one_span(self):
+        a = put(band(), (250, 250, 250), y=100, h=30)
+        put(a, (250, 250, 250), y=140, h=30)
+        self.assertEqual(ink_span(ink(a)), (100, 169))
+
+    def test_nothing_on_screen_has_no_answer(self):
+        self.assertIsNone(ink_span(ink(band())))
+
+    def test_the_gate_reports_it_only_while_there_is_a_line(self):
+        g = ChangeGate(min_ink=700)
+        g.feed(put(band(), (250, 250, 250), y=120, h=40))
+        self.assertEqual(g.span, (120, 159))
+        for _ in range(4):
+            g.feed(band())
+        self.assertIsNone(g.span, "a stale position puts the next plate in the wrong place")
 
 
 class Ink(unittest.TestCase):

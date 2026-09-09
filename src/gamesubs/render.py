@@ -20,26 +20,140 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-PLATE = (0, 0, 0, 190)          # subtitle backing, slightly transparent
+from . import shape
+
+# 🛑 The paragraph above says Pillow "places them correctly". Measured 2026-09-09, that is true of
+# tkinter and false of the font: Pillow on Windows reports features.check("raqm") == False, so it
+# lays out with LAYOUT_BASIC and applies NEITHER GSUB NOR GPOS. Every Thai font in reach swaps the
+# tone mark for a raised variant when a vowel already sits on the consonant -- Google Sans
+# 3209 -> 3248, Noto 47 -> 49, Leelawadee 319 -> 342, Tahoma 1174 -> 1144 -- and none of those
+# substitutions happen without a shaper. That is the whole of เพื่อ drawn เพือ.
+#
+# So the text is shaped by HarfBuzz and drawn glyph by glyph (see shape.py). Pillow still owns the
+# plate, the compositing and the Latin fallback path; it no longer owns where the marks go.
+
+# OPAQUE, and that is the whole job. At 190 the sentence underneath is dimmed, not hidden -- and
+# a dimmed English line under a Thai one is exactly the "same thing twice in two languages" this
+# plate exists to remove. Measured on a two-line RE4R subtitle: at 190 both English lines were
+# still readable straight through it.
+PLATE = (0, 0, 0, 255)
 TEXT = (255, 255, 255, 255)
 SPEAKER = (207, 211, 216, 255)
 OUTLINE = (0, 0, 0, 255)
 PAD_X, PAD_Y, GAP = 16, 8, 2
 
 
-def load(path_or_family, size):
-    """A PIL font from a file path. Falls back to PIL's built-in only as a last resort."""
+def _rgba(spec, fallback):
+    """"#rrggbb" -> an opaque RGBA tuple. Anything else -> the fallback. -> tuple
+
+    Alpha is not taken from the caller and not offered in the panel. A plate you can read
+    the original through is the bug this tool started with: the same sentence on screen
+    twice, in two languages, and it looked deliberate enough that nobody called it a bug
+    for an hour.
+    """
+    if not isinstance(spec, str) or len(spec) != 7 or spec[0] != "#":
+        return fallback
     try:
-        return ImageFont.truetype(path_or_family, size)
+        return (int(spec[1:3], 16), int(spec[3:5], 16), int(spec[5:7], 16), 255)
+    except ValueError:
+        return fallback
+
+
+class Face(object):
+    """A font at a size, carrying the FILE PATH as well as the Pillow object.
+
+    The path is the part that matters: a shaper needs the file, and Pillow's font object does not
+    reliably give one back. Everything the rest of this module already called on a Pillow font --
+    `getlength`, `size` -- still works, so wrapping and measuring did not have to change.
+    """
+
+    __slots__ = ("path", "size", "pil", "shaped")
+
+    def __init__(self, path, size, pil):
+        self.path = path
+        self.size = size
+        self.pil = pil
+        # Per face, not global: a path Pillow opened is not automatically one HarfBuzz can shape
+        # (a .ttc collection, a bitmap-only font), and the answer must be about THIS file.
+        self.shaped = bool(path) and shape.HAVE_SHAPER and shape.can_draw(path, "ก")
+
+    def getlength(self, text):
+        if self.shaped:
+            try:
+                return shape.advance(self.path, self.size, text)
+            except Exception:                                # noqa: BLE001
+                pass                     # a width is not worth losing the line over; fall through
+        return self.pil.getlength(text)
+
+    def getbbox(self, *a, **k):
+        return self.pil.getbbox(*a, **k)
+
+    def __getattr__(self, name):
+        """Anything this class does not define is asked of the Pillow font underneath.
+
+        🛑 THIS IS NOT CONVENIENCE, IT IS THE BUG THAT SHIPPED TWICE IN ONE HOUR. Wrapping the
+        font in a class quietly broke every `ImageDraw.text(..., font=...)` in the project at
+        once -- six call sites across four modules -- and each one only announces itself when a
+        person reaches that screen:
+
+            AttributeError: 'Face' object has no attribute 'getmask'
+
+        The first user to run it hit the font chooser, which died drawing its own row labels.
+        Patching that one line would have left the other five waiting, one screen further in.
+
+        What it does NOT do is make Pillow draw Thai correctly -- Pillow has no shaper here, see
+        the note at the top of this file. Pillow draws the chrome (labels, Latin); complex text
+        goes through `draw_line`, which draws by glyph id.
+        """
+        if name == "pil":                    # never recurse while __init__ is still running
+            raise AttributeError(name)
+        return getattr(self.pil, name)
+
+
+def _face(f):
+    """Accept either a Face or a bare Pillow font. -> Face
+
+    Callers outside this module -- and the tests -- hand `draw_line` whatever `ImageFont.truetype`
+    gave them, and there is no reason for a drawing function to refuse a font. A bare Pillow font
+    simply has no file path attached, so it draws the old way.
+    """
+    if isinstance(f, Face):
+        return f
+    path = getattr(f, "path", None)
+    size = int(getattr(f, "size", 0) or 28)
+    return Face(path if path and os.path.isfile(str(path)) else None, size, f)
+
+
+_WARNED = []
+
+
+def load(path_or_family, size):
+    """A font at a size. Falls back to PIL's built-in only as a last resort."""
+    if not shape.HAVE_SHAPER and not _WARNED:
+        _WARNED.append(1)
+        # Loud, once. A renderer that quietly loses mark positioning produces text that looks
+        # deliberate and reads as broken -- the failure mode this whole module exists to remove.
+        print("WARNING: no text shaper installed, so Thai marks will sit where the font's default\n"
+              "         glyphs put them rather than where the font says they belong.\n"
+              "         %s" % shape.missing_reason())
+    try:
+        pil = ImageFont.truetype(path_or_family, size)
     except Exception:
-        return ImageFont.load_default()
+        return Face(None, size, ImageFont.load_default())
+    return Face(path_or_family if os.path.isfile(str(path_or_family)) else None, size, pil)
 
 
 def _bitmap(font, ch):
-    """What this font actually paints for one character."""
+    """What this font actually paints for one character.
+
+    Takes a Face or a bare Pillow font. Coverage is a question about the FILE -- does it have a
+    glyph for this codepoint at all -- so it is asked through Pillow either way; where the mark
+    ends up is a different question and belongs to the shaper.
+    """
+    pil = getattr(font, "pil", font)
     n = int(getattr(font, "size", 32)) * 3
     im = Image.new("L", (n, n), 0)
-    ImageDraw.Draw(im).text((n // 4, n // 4), ch, font=font, fill=255)
+    ImageDraw.Draw(im).text((n // 4, n // 4), ch, font=pil, fill=255)
     return im.tobytes()
 
 
@@ -115,45 +229,92 @@ def wrap(text, font, max_width):
     return lines or [""]
 
 
-def draw_line(text, speaker="", font=None, small=None, max_width=1100):
-    """Render one subtitle. Returns an RGBA image, or None when there is nothing to show."""
+def draw_line(text, speaker="", font=None, small=None, max_width=1100,
+              text_colour=None, plate_colour=None):
+    """Render one subtitle. Returns an RGBA image, or None when there is nothing to show.
+
+    The plate is the size of the SENTENCE, and `max_width` is where a line wraps -- the caller
+    passes the width of the box, so lines break in the same place every time and the plate can
+    never come out wider than the region being read.
+
+    It was the size of the BOX for about an hour, which is a fixed black slab with the words
+    floating somewhere inside it. Watching it run, that reads as the text being unstable even
+    though nothing is moving: a short line and a two-line one start at different places inside a
+    frame that never changes. Fitting the plate to the words puts them in the same position
+    relative to their own plate every time, and the window is centred in the box by the caller.
+
+    The two colours arrive as "#rrggbb" from the settings window and are None everywhere
+    else, which means the constants. The OUTLINE is not one of them: it is what keeps the
+    text readable where the plate does not reach -- the tail of a glyph that hangs past its
+    own line -- and offering it as a choice is offering a way to make the subtitle vanish
+    against a bright scene.
+    """
+    plate = _rgba(plate_colour, PLATE)
+    ink = _rgba(text_colour, TEXT)
     text = (text or "").replace("\\n", "\n").strip()
     if not text:
         return None
-    font = font or ImageFont.load_default()
-    small = small or font
+    font = _face(font or ImageFont.load_default())
+    small = _face(small) if small else font
 
     lines = wrap(text, font, max_width - 2 * PAD_X)
-    probe = Image.new("RGBA", (1, 1))
-    d0 = ImageDraw.Draw(probe)
 
-    def box(s, f):
-        l, t, r, b = d0.textbbox((0, 0), s or " ", font=f)
-        return r - l, b - t, t
+    def metrics(f):
+        try:
+            asc, desc = f.pil.getmetrics()
+        except Exception:                                    # noqa: BLE001
+            asc, desc = int(f.size * 0.8), int(f.size * 0.25)
+        return asc, desc
 
-    sizes = [box(s, font) for s in lines]
-    body_w = max(w for w, _, _ in sizes)
-    line_h = max(h for _, h, _ in sizes) + GAP
-    sp_w, sp_h, _ = box(speaker, small) if speaker else (0, 0, 0)
+    # Heights come from the FONT's own ascent/descent, not from the bounding box of this
+    # particular string. A box measured per line makes the plate jump between lines depending on
+    # whether that line happened to contain a tall mark -- and Thai lines differ in exactly that.
+    asc, desc = metrics(font)
+    line_h = asc + desc + GAP
+    sp_asc, sp_desc = metrics(small)
+    sp_h = (sp_asc + sp_desc) if speaker else 0
 
-    w = max(body_w, sp_w) + 2 * PAD_X
-    h = len(lines) * line_h + (sp_h + GAP * 2 if speaker else 0) + 2 * PAD_Y
+    body_w = max(font.getlength(s) for s in lines)
+    sp_w = small.getlength(speaker) if speaker else 0
 
-    im = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    w = int(max(body_w, sp_w)) + 2 * PAD_X
+    h = int(len(lines) * line_h + (sp_h + GAP * 2 if speaker else 0) + 2 * PAD_Y)
+
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, w - 1, h - 1], fill=PLATE)
+    d.rectangle([0, 0, w - 1, h - 1], fill=plate)
 
+    plan = []
     y = PAD_Y
     if speaker:
-        d.text((w / 2, y), speaker, font=small, fill=SPEAKER, anchor="ma",
-               stroke_width=2, stroke_fill=OUTLINE)
+        plan.append((speaker, small, sp_asc, y, SPEAKER, 2))
         y += sp_h + GAP * 2
     for s in lines:
-        # The outline is what keeps white text readable over a bright scene. Without it the line
-        # disappears against snow, sky or a muzzle flash exactly when someone is talking.
-        d.text((w / 2, y), s, font=font, fill=TEXT, anchor="ma",
-               stroke_width=3, stroke_fill=OUTLINE)
+        plan.append((s, font, asc, y, ink, 3))
         y += line_h
+
+    if font.shaped:
+        import numpy as np
+        arr = np.array(im)
+        for s, f, a, top, fill, stroke in plan:
+            if not s:
+                continue
+            x = (w - f.getlength(s)) / 2.0
+            base = top + a
+            # The outline is what keeps white text readable over a bright scene: without it the
+            # line disappears against snow, sky or a muzzle flash exactly when someone is talking.
+            # Pillow draws one for free; drawing by glyph means drawing it, so the text is stamped
+            # around itself first and then over the top.
+            for dx in range(-stroke, stroke + 1):
+                for dy in range(-stroke, stroke + 1):
+                    if dx or dy:
+                        shape.draw(arr, f.path, f.size, s, (x + dx, base + dy), fill=OUTLINE[:3])
+            shape.draw(arr, f.path, f.size, s, (x, base), fill=fill[:3])
+        return Image.fromarray(arr)
+
+    for s, f, a, top, fill, stroke in plan:
+        d.text((w / 2.0, top), s, font=f.pil, fill=fill, anchor="ma",
+               stroke_width=stroke, stroke_fill=OUTLINE)
     return im
 
 

@@ -41,6 +41,49 @@ def ink(rgb, bright=185):
     return (rgb[:, :, 0] >= bright) & (rgb[:, :, 1] >= bright)
 
 
+def ink_bounds(mask, floor=0.10):
+    """The rectangle the line occupies. -> (top, bottom, left, right) in band pixels, or None.
+
+    Both directions matter and for different reasons. The rows say WHERE to put the plate; the
+    columns say HOW WIDE it has to be, and without them the plate is as wide as the box someone
+    dragged -- a black band across the picture for a three-word line.
+    """
+    rows = _dense(mask.sum(axis=1), floor)
+    cols = _dense(mask.sum(axis=0), floor)
+    if rows is None or cols is None:
+        return None
+    return rows[0], rows[1], cols[0], cols[1]
+
+
+def _dense(counts, floor):
+    """First and last index carrying at least `floor` of the busiest one. -> (a, b) or None."""
+    if not counts.size:
+        return None
+    peak = int(counts.max())
+    if peak <= 0:
+        return None
+    keep = np.nonzero(counts >= max(1.0, peak * floor))[0]
+    return (int(keep[0]), int(keep[-1])) if len(keep) else None
+
+
+def ink_span(mask, floor=0.10):
+    """Which ROWS of the band the line occupies. -> (top, bottom) in band pixels, or None.
+
+    The plate that hides the original has to be somewhere, and the middle of the dragged box is a
+    guess: people drag a generous box around WHERE subtitles appear, and the line sits wherever
+    that game puts it inside that. Measured instead -- this is the same mask the change gate
+    already computes, so it costs one more pass over an array that is in cache.
+
+    A row counts only if it carries at least `floor` of the busiest row's ink. `ink` is a colour
+    filter and not a text detector (see its docstring: a snow field passes it), and without the
+    floor a single bright pixel of scenery two hundred rows away stretches the answer over the
+    whole band. On a bright scene it will still do that -- and the plate is then as tall as the
+    box, which is where this started, so the failure is the old behaviour rather than a new one.
+    """
+    b = ink_bounds(mask, floor)
+    return (b[0], b[1]) if b else None
+
+
 def coarse(mask, w=COARSE_W, thr=25):
     """Shrink a mask so sub-pixel rendering differences on a STATIC line are not read as a change.
 
@@ -123,10 +166,15 @@ class ChangeGate:
         self.off = 0
         self.ink_n = 0
         self.diff_n = 0
+        self.span = None          # which rows the line is on, for the plate that has to cover it
+        self.cols = None          # and how wide it is, so the plate is not wider than the line
 
     def feed(self, rgb):
         m = ink(rgb, self.bright)
         self.ink_n = int(m.sum())
+        bounds = ink_bounds(m) if self.ink_n >= self.min_ink else None
+        self.span = (bounds[0], bounds[1]) if bounds else None
+        self.cols = (bounds[2], bounds[3]) if bounds else None
         if self.ink_n < self.min_ink:
             self.off += 1
             if self.off == self.off_ticks:

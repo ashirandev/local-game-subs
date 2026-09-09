@@ -13,6 +13,9 @@ translated in an overlay. One machine. Nothing is uploaded, nothing is stored.
 It works with any game that draws subtitles, because it reads pixels rather than hooking into
 anything. There is no injection, no memory reading, no modding — the game does not know it exists.
 
+**👉 If you just want to use it: [GUIDE.md](GUIDE.md)** — download to subtitles in five minutes,
+with pictures, no command line. The rest of this page is how it works and how it was measured.
+
 ---
 
 ## What you need
@@ -32,6 +35,15 @@ the llama.cpp build changed. Measured on this machine with `gamesubs check`:
 | **CUDA** (RTX 5070 Ti) | **0.6** | 4/4 | 515 MB |
 | **Vulkan** (same card) | **0.7** | 4/4 | 34 MB |
 | **CPU only** (28 cores) | **3.0** | 4/4 | 18 MB |
+
+E2B against E4B, same machine, 21 reads each over seven scenes — two-line cutscene subtitles, a speaker label, a menu, proper nouns, pale text, a line touching the edge, HUD digits:
+
+| | seconds a line | GPU | reads the same words |
+|---|---|---|---|
+| **gemma-4 E2B** Q4_K_M | **0.66** | 8.3 GB | yes, in 6 of 7 |
+| gemma-4 E4B Q4_K_M | 1.07 | 9.9 GB | yes |
+
+E2B is a third faster in every one of the seven and leaves 1.6 GB more of the card to the game. The difference it loses on is spelling: it wrote *Racoon City* for *Raccoon City*. Both translated an inventory screen instead of returning nothing, so that one is the prompt, not the model.
 
 All three read every line correctly; only the speed moves. `setup` installs the **Vulkan** build:
 a tenth of a second slower than CUDA, fifteen times smaller, works on AMD and Intel too, and never
@@ -69,6 +81,11 @@ Everything is free. `gamesubs setup` fetches the model for you, but if you would
 | **The model** | [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) | 4.7 GB |
 | **Vision projector** | [mmproj-BF16.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-BF16.gguf) | 945 MB |
 | (both, same page) | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | |
+| **A smaller, faster model** | [unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF) — take `gemma-4-E2B-it-Q4_K_M.gguf` **and that page’s own `mmproj-BF16.gguf`**, then rename the projector to `mmproj-E2B-BF16.gguf` before saving it beside the other one | 4.1 GB |
+
+`gamesubs models` prints this table with the links, says which you already have, and `gamesubs setup --model-name e2b` downloads a pair and names it correctly.
+
+⚠️ **Both models publish their projector as `mmproj-BF16.gguf`.** Keep two models and download the second one by hand, and it lands on top of the first model’s projector — same name, within a few MB of the same size — and that model then reads every frame as blank with nothing on screen to say why. `setup --model-name` renames it for you, which is why it exists.
 
 🛑 **You need BOTH files.** The projector is what lets the model see. Without it the server
 starts normally, answers questions about text, and then fails on every single frame — which looks
@@ -161,8 +178,8 @@ answers questions about text, and then fails on every single frame.
 
 **No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
 unzip it, and double-click **`setup.bat`**. It builds a private Python inside the folder, installs
-the three packages it needs into that, downloads llama.cpp and the model, and runs the check.
-Then double-click **`play.bat`**.
+the five packages it needs into that, downloads llama.cpp and the model, and runs the check.
+Then double-click **`play.bat`**. Step by step, with pictures: **[GUIDE.md](GUIDE.md)**.
 
 If you would rather use the command line:
 
@@ -193,9 +210,41 @@ read.
 python -m gamesubs play
 ```
 
-That starts the model, the translator and the overlay together. Drag the overlay where you want
-the line, then `Ctrl+Alt+L` to lock it — locked, it is click-through and the game gets every
-click. `Ctrl+Alt+Q` quits and saves the position.
+That opens **one window with everything on it** — model, font, text colour, background, size,
+and how long a line stays up — and nothing happens until you press **Start**. Then you aim a
+box at the game's subtitles while the model loads behind it, and a strip along the bottom of
+the window says which stage it is on.
+
+![the dashboard](docs/6-the-dashboard.png)
+
+Leave the window open while you play: every control on it reaches the subtitle straight away.
+A subtitle setting is not something anyone can judge without watching one.
+
+**One box.** The rectangle you drag is what gets read, how wide a line may get, and where the
+translation appears — one thing to aim, in the place you drew it. The plate itself is the size
+of the **sentence**, centred in that box: a fixed slab with the words floating inside it makes
+the text look unstable every time the line changes length. The box is grown by `--pad` (14 px)
+at the edges, because a drag that ends one pixel inside the sentence hands the model a clipped
+word which it then translates perfectly, as the wrong word.
+
+The box opens already drawn, centred and low, where games put their subtitles — measured
+against both a box a person aimed by hand and RE4R's own cutscene line. Drag outside it to
+redraw, drag **inside** it to move it without resizing, arrow keys to nudge, `C` to centre.
+The dashed line down the middle of each screen is where the centre is, and it turns green
+when the box agrees with it.
+
+⚠️ **Draw the box tall enough for a TWO-line subtitle.** A box drawn around a one-line one is
+short by exactly one line the moment a game shows two, and the model is then handed half a
+sentence, translates that half perfectly, and nothing looks broken. The console warns you when the
+text reaches the edge of your box.
+
+There is nothing else to place. The subtitle appears on your box by itself, clicks go straight
+through to the game, and when nobody is speaking there is nothing on screen at all.
+`Ctrl+Alt+Q` quits.
+
+**A settings window opens with it** — model, font, text colour, background, text size, and how
+long a line stays up. Leave it open while you play: every change reaches the subtitle straight
+away, because a subtitle setting is not something anyone can judge without watching one.
 
 The hotkeys are global because they have to be: a locked window cannot be clicked, so an unlock
 button *on the window* would make the first lock permanent.

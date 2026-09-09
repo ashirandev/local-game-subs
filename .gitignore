@@ -16,7 +16,15 @@ models/
 llama.cpp/
 overlay-position.json
 
-# fonts are licensed work -- never commit them
-fonts/
+# A font is someone's licensed work, and most of the good-looking ones may not be passed on.
+# So: nothing in here ships EXCEPT the one open-licensed family we are allowed to give away,
+# named file by file. An allow-list rather than a block-list, because the cost of getting it
+# wrong is one-directional -- a font that fails to ship is a missing file, a font that ships
+# without the right to is a licence violation in a public repository, on someone else's work.
+# Guarded by tests/test_only_free_fonts_ship.py, which reads what git actually tracks.
+fonts/*
+!fonts/NotoSansThai-Regular.ttf
+!fonts/OFL-NotoSansThai.txt
+!fonts/PUT-FONTS-HERE.txt
 font-comparison.png
 settings.json

@@ -15,7 +15,9 @@ import unittest
 
 sys.path.insert(0, __file__.rsplit("tests", 1)[0] + "src")
 from gamesubs import server
-from gamesubs.region import MIN_SIDE, norm_box, to_screen
+from gamesubs.__main__ import _grown
+from gamesubs.region import (MIN_SIDE, banner_spots, hint_spot, monitor_for,
+                             norm_box, to_screen)
 
 
 class DragMaths(unittest.TestCase):
@@ -39,6 +41,145 @@ class DragMaths(unittest.TestCase):
 
     def test_a_misclick_threshold_exists(self):
         self.assertGreater(MIN_SIDE, 0)
+
+
+class Args(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class TheBoxGetsALittleAir(unittest.TestCase):
+    """A drag that ends one pixel inside the sentence hands the model a clipped word.
+
+    Which it then translates perfectly, as the wrong word, with nothing anywhere reporting a
+    problem -- the failure this whole file is about. So the box in use is a little larger than the
+    box that was drawn, in both directions, because what is read and what is covered are the same
+    rectangle.
+    """
+
+    MON = {"left": 0, "top": 0, "width": 2560, "height": 1440}
+
+    def test_it_grows_on_every_side(self):
+        self.assertEqual(_grown([100, 200, 400, 60], self.MON, 10), [90, 190, 420, 80])
+
+    def test_a_box_against_the_bottom_edge_has_nowhere_to_grow(self):
+        """Subtitles live at the bottom of the screen, so this is the ordinary case."""
+        got = _grown([100, 1380, 400, 60], self.MON, 20)
+        self.assertEqual(got[1] + got[3], 1440)
+        self.assertEqual(got[1], 1360)
+
+    def test_the_corners_clamp_too(self):
+        self.assertEqual(_grown([0, 0, 100, 50], self.MON, 30), [0, 0, 130, 80])
+
+    def test_zero_pad_is_the_box_exactly_as_drawn(self):
+        self.assertEqual(_grown([100, 200, 400, 60], self.MON, 0), [100, 200, 400, 60])
+
+    def test_no_box_stays_no_box(self):
+        self.assertIsNone(_grown(None, self.MON, 14))
+
+    def test_the_band_that_gets_watched_is_the_grown_one(self):
+        """Through the real path, not the helper. A test that calls `_grown` directly proves the
+        arithmetic and nothing about whether anything uses it -- and a mutant that deleted the
+        call from `_band` stayed green until this test existed. It is the same seam that broke
+        the font search this morning: both halves correct, nothing joining them."""
+        from gamesubs.__main__ import _band
+        try:
+            b = _band(Args(region="600,1200,400,60", monitor=1, frac=0.25, wfrac=0.7,
+                           pad=10, no_select=True))
+        except Exception as e:                                # noqa: BLE001
+            self.skipTest("no screen here: %s" % e)
+        self.assertEqual((b.rect["width"], b.rect["height"]), (420, 80))
+        self.assertEqual((b.rect["left"], b.rect["top"]), (590, 1190))
+
+    def test_and_pad_zero_leaves_it_alone(self):
+        from gamesubs.__main__ import _band
+        try:
+            b = _band(Args(region="600,1200,400,60", monitor=1, frac=0.25, wfrac=0.7,
+                           pad=0, no_select=True))
+        except Exception as e:                                # noqa: BLE001
+            self.skipTest("no screen here: %s" % e)
+        self.assertEqual((b.rect["left"], b.rect["top"], b.rect["width"], b.rect["height"]),
+                         (600, 1200, 400, 60))
+
+
+class NothingIsDrawnInAHole(unittest.TestCase):
+    """The virtual screen is a bounding box, and a bounding box of unequal monitors has holes.
+
+    This is the bug a person actually hit, on 2026-09-09, with the game running: he dragged a box
+    around Resident Evil 4's subtitles, and neither instruction was anywhere on any screen. Both
+    were drawn at coordinates inside the virtual rectangle and on no display:
+
+        the banner            (2780, 40)      between two monitors, above a third
+        "press ENTER"         (1269, 1465)    below the bottom edge of the monitor he used
+
+    He had a dashed box, no way to find out what to press, and his keystrokes went to the game.
+    The measurement is the layout of his desk, so the layout is what the tests are written on.
+    """
+
+    # 2560x1440 main, a 1920x1080 sitting 358 px lower to its right, a portrait screen past that.
+    MONS = [{"left": 0, "top": 0, "width": 2560, "height": 1440},
+            {"left": 2560, "top": 358, "width": 1920, "height": 1080},
+            {"left": 4480, "top": 0, "width": 1080, "height": 1920}]
+    VIRTUAL = {"left": 0, "top": 0, "width": 5560, "height": 1920}
+    BOX = (655, 1209, 1228, 230)                    # the box he drew, around the game's subtitles
+
+    def on_a_screen(self, x, y):
+        return monitor_for(x, y, self.MONS) is not None
+
+    def test_the_hole_is_real(self):
+        """If this ever fails, the rest of this class is guarding nothing."""
+        self.assertTrue(self.on_a_screen(1269, 1400))
+        self.assertFalse(self.on_a_screen(1269, 1465), "point below the main monitor")
+        self.assertFalse(self.on_a_screen(2780, 40), "point above the middle monitor")
+
+    def test_the_instruction_for_a_bottom_of_screen_box_is_visible(self):
+        x, y = hint_spot(self.BOX, self.MONS)
+        self.assertTrue(self.on_a_screen(x, y), "the instruction landed on no monitor")
+
+    def test_a_subtitle_box_is_always_at_the_bottom_so_test_every_monitor(self):
+        """Not a special case: subtitles are at the bottom of the screen on every game there is,
+        so 'below the box' is off the monitor in the ORDINARY case."""
+        for m in self.MONS:
+            box = (m["left"] + 40, m["top"] + m["height"] - 200, m["width"] - 80, 195)
+            x, y = hint_spot(box, self.MONS)
+            self.assertTrue(self.on_a_screen(x, y), "off-screen for monitor at %s" % m["left"])
+
+    def test_a_box_in_open_space_keeps_the_instruction_below_it(self):
+        x, y = hint_spot((300, 300, 600, 100), self.MONS)
+        self.assertGreater(y, 400, "with room underneath it belongs underneath")
+        self.assertTrue(self.on_a_screen(x, y))
+
+    def test_a_box_taller_than_its_monitor_puts_it_inside(self):
+        x, y = hint_spot((10, 0, 2000, 1440), self.MONS)
+        self.assertTrue(self.on_a_screen(x, y))
+
+    def test_every_monitor_gets_its_own_banner(self):
+        spots = banner_spots(self.MONS)
+        self.assertEqual(len(spots), len(self.MONS))
+        for x, y in spots:
+            self.assertTrue(self.on_a_screen(x, y), "banner at (%s, %s) is on no monitor" % (x, y))
+
+    def test_the_selector_draws_one_banner_per_monitor_through_that_function(self):
+        """Through the real path. Asserting on `banner_spots` proves the arithmetic and nothing
+        about whether the window uses it -- a mutant that put the banner back in the middle of
+        the virtual screen stayed green until this existed. `select` needs a display, so this
+        reads the source it would run rather than opening a window nobody is looking at."""
+        import inspect
+
+        from gamesubs import region as regmod
+        src = inspect.getsource(regmod.select)
+        self.assertIn("banner_spots(mons)", src)
+        self.assertNotIn('virtual["width"] // 2, 40', src)
+
+    def test_the_middle_of_the_virtual_screen_is_not_a_place(self):
+        """The old behaviour, kept as a test so it cannot come back as a 'simplification'."""
+        self.assertFalse(self.on_a_screen(self.VIRTUAL["width"] // 2, 40))
+
+    def test_no_monitors_still_works(self):
+        """`select` can be called with only the virtual rect -- it must place, not crash."""
+        self.assertIsNone(monitor_for(5, 5, None))
+        self.assertEqual(banner_spots(None), [])
+        self.assertEqual(hint_spot(self.BOX, None), (655 + 614, 1209 + 230 + 30))
 
 
 class ScreenCoordinates(unittest.TestCase):

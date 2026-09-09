@@ -28,3 +28,6 @@ fonts/*
 !fonts/PUT-FONTS-HERE.txt
 font-comparison.png
 settings.json
+
+# OCR scratch from the local reader; derived, never shipped.
+_ocr/

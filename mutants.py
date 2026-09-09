@@ -12,6 +12,7 @@ gate reported "same line" for four completely different subtitles, because the f
 filled rectangles and rectangles survive being shrunk. It is first on the list as a reminder that
 the suite has been wrong before.
 """
+import glob
 import io
 import os
 import shutil
@@ -20,12 +21,11 @@ import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src", "gamesubs")
-TESTS = ["test_capture.py", "test_vision.py", "test_service.py", "test_server.py",
-         "test_no_phone_home.py", "test_overlay.py", "test_region.py", "test_shape.py",
-         "test_cover.py", "test_asks_every_run.py", "test_only_free_fonts_ship.py",
-         "test_hold.py", "test_panel.py", "test_launcher.py", "test_aim.py",
-         "test_same_line_same_words.py",
-         "test_no_shadowed_imports.py"]
+# Found, not listed. The hand-written list had drifted three files behind what is in tests/ --
+# including test_the_loop_starts.py, which exists because a bug reached the user -- and a
+# mutation score computed without a test is a score for a suite nobody has.
+TESTS = sorted(os.path.basename(p)
+               for p in glob.glob(os.path.join(ROOT, "tests", "test_*.py")))
 
 # (file, what it says now, what the mutant makes it say, what the mutant breaks)
 # A newline, written without an escape: a few mutants below replace a fragment that
@@ -261,8 +261,8 @@ MUTANTS = [
     ("service.py", '    if _lead_colon(th) and ":" not in (en or ""):',
      '    if _lead_colon(th):',
      'an English sentence containing a colon makes the Thai lose its first clause'),
-    ("service.py", '        return _cut(en, kind), _cut(th, kind)',
-     '        return _cut(en, kind), th',
+    ("service.py", '        return speaker, _cut(en, kind), _cut(th, kind)',
+     '        return speaker, _cut(en, kind), th',
      'the English is cleaned and the translation still carries the name -- which is the half the player actually reads'),
     ("region.py", 'DEFAULT_BOTTOM = 0.88',
      'DEFAULT_BOTTOM = 0.75',
@@ -318,6 +318,9 @@ MUTANTS = [
     ("service.py", '    "4. If there is NO readable text at all, return all three fields empty. An empty answer "',
      '    "4. Always answer with something. An empty answer "',
      'a quiet scene gets a black plate with an invented line on it'),
+    ("fonts.py", '    if all(getattr(f, "shaped", False) for _, f, _, _, _ in plan):',
+     '    if False:',
+     'the font sheet draws every row unshaped, so every font fails the one column it exists for'),
 ]
 
 
@@ -352,13 +355,23 @@ def run_tests():
 
 
 def main():
+    print("%d test files, %d mutants" % (len(TESTS), len(MUTANTS)))
     ok, where = run_tests()
     if not ok:
         print("the suite is already red in %s -- fix that before mutating." % where)
         return 1
 
+    # --only N runs a single mutant. Without it the only question you can ask costs 37 minutes,
+    # which is how mutant 80 kept a dead anchor for a day with nobody noticing.
+    only = None
+    for a in sys.argv[1:]:
+        if a.startswith("--only"):
+            only = int(a.split("=", 1)[1] if "=" in a else sys.argv[sys.argv.index(a) + 1])
+
     killed = survived = 0
     for i, (fname, old, new, what) in enumerate(MUTANTS, 1):
+        if only is not None and i != only:
+            continue
         path = os.path.join(SRC, fname)
         src = io.open(path, encoding="utf-8").read()
         if src.count(old) != 1:
@@ -380,7 +393,7 @@ def main():
             killed += 1
             print("%2d. killed    %-11s %s  (%s)" % (i, fname, what, broke))
 
-    print("\n%d/%d killed" % (killed, len(MUTANTS)))
+    print("\n%d/%d killed" % (killed, (killed + survived) if only is not None else len(MUTANTS)))
     if survived:
         print("A survivor is a behaviour nothing checks. Either it does not matter -- say so and\n"
               "drop the mutant -- or there is a test missing.")

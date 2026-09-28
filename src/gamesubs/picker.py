@@ -12,7 +12,7 @@ import os
 import tkinter as tk
 from tkinter import ttk
 
-from .server import list_models, match_projector
+from .server import pairs as model_pairs
 
 BG = "#14171a"
 FG = "#e8eaed"
@@ -29,8 +29,8 @@ def _mb(path):
 
 def choose(models_dir, title="Choose a model"):
     """Returns (weight_path, projector_path), or None if the window was closed."""
-    weights, projectors = list_models(models_dir)
-    if not weights:
+    found = model_pairs(models_dir)
+    if not found:
         return None
 
     picked = {"v": None}
@@ -40,13 +40,12 @@ def choose(models_dir, title="Choose a model"):
     root.resizable(False, False)
 
     labels, pairs = [], {}
-    for w in weights:
-        p = match_projector(w, projectors)
+    for w, p, why in found:
         label = "%s   (%.1f GB)%s" % (w, _mb(os.path.join(models_dir, w)) / 1024.0,
-                                      "" if p else "   -- no projector, cannot see")
+                                      "" if p else "   -- no projector that fits, cannot see")
         labels.append(label)
         pairs[label] = (os.path.join(models_dir, w),
-                        os.path.join(models_dir, p) if p else None)
+                        os.path.join(models_dir, p) if p else None, why)
 
     tk.Label(root, text="Which model should read your screen?", bg=BG, fg=FG,
              font=("Segoe UI", 12, "bold")).pack(padx=20, pady=(18, 2), anchor="w")
@@ -60,16 +59,13 @@ def choose(models_dir, title="Choose a model"):
     note.pack(padx=20, pady=(0, 10), anchor="w")
 
     def refresh(*_):
-        m, p = pairs[var.get()]
-        note.configure(
-            text=("projector: %s" % os.path.basename(p)) if p else
-            "This model has no mmproj-*.gguf beside it. A vision model is two files, and without\n"
-            "the second one the server starts, answers text, and fails on every picture.",
-            fg=DIM if p else "#ff8a80")
+        m, p, why = pairs[var.get()]
+        note.configure(text=("projector: %s" % os.path.basename(p)) if p else why,
+                       fg=DIM if p else "#ff8a80")
         start.configure(state="normal" if p else "disabled")
 
     def go(*_):
-        picked["v"] = pairs[var.get()]
+        picked["v"] = pairs[var.get()][:2]
         root.destroy()
 
     row = tk.Frame(root, bg=BG)

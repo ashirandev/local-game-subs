@@ -157,6 +157,38 @@ class TheFontSearchAcceptsWhatLoadReturns(unittest.TestCase):
         self.assertGreaterEqual(len(cands), 1)
 
 
+@unittest.skipUnless(shape.HAVE_SHAPER, "no shaper installed")
+class AFolderWithAThaiName(unittest.TestCase):
+    """Unzipped under a Thai user name, the overlay died on its first subtitle.
+
+    Reported 2026-09-27 by a user whose Windows account has a Thai name, so the tool lived at
+    C:\\Users\\<Thai>\\Downloads\\local-game-subs and so did its fonts/. FreeType was handed that
+    path as UTF-8 and opened it with the ANSI codepage: `cannot open resource`. HarfBuzz and Pillow
+    open the same path fine, so the picker and the preview both worked -- only the drawing of a
+    real line, which is the one part a person cannot skip, failed.
+
+    Asserted through `render.draw_line` with a font from `render.load`, because that is the pair
+    the overlay uses; calling shape.draw directly would also catch it, but would not prove the
+    overlay's own path reaches the shaper.
+    """
+
+    def test_a_line_draws_from_a_font_in_a_thai_named_folder(self):
+        import shutil
+        import tempfile
+        fonts = thai_fonts()
+        if not fonts:
+            self.skipTest("no Thai font in fonts/")
+        with tempfile.TemporaryDirectory() as d:
+            where = os.path.join(d, "\u0e41\u0e1b\u0e25")
+            os.makedirs(where)
+            p = shutil.copy(fonts[0], where)
+            face = render.load(p, 40)
+            self.assertEqual(face.path, p, "the font did not reach the shaper at all")
+            im = render.draw_line(STACKED, font=face, small=render.load(p, 22))
+            self.assertIsNotNone(im)
+            self.assertGreater(im.getchannel("A").getextrema()[1], 0, "nothing was drawn")
+
+
 class WithoutAShaper(unittest.TestCase):
     """The tool still runs without uharfbuzz -- it just says so instead of quietly being wrong."""
 

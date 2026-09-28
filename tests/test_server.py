@@ -410,6 +410,144 @@ class ASecondModelDoesNotBreakTheFirst(unittest.TestCase):
         self.assertIsNone(server.match_projector(self.E4B, self.PROJ))
 
 
+def fake_gguf(path, arch, width_key, width, version=3):
+    """A GGUF header with nothing after it -- enough for `gguf_width`, which reads no tensors.
+
+    Carries the two things a real header has in the way: an array of strings ahead of the key
+    (the tokenizer's vocabulary sits there in a real model) and, in a projector, a decoy --
+    `clip.vision.embedding_length` is also a width, of the wrong thing, and comes first.
+    """
+    import struct
+
+    def s(t):
+        b = t.encode("utf-8")
+        return struct.pack("<Q", len(b)) + b
+
+    kv = [s("general.architecture") + struct.pack("<I", 8) + s(arch),
+          s("tokenizer.ggml.tokens") + struct.pack("<I", 9) + struct.pack("<IQ", 8, 3)
+          + s("a") + s("b") + s("c")]
+    if arch == "clip":
+        kv.append(s("clip.vision.embedding_length") + struct.pack("<I", 4) + struct.pack("<I", 768))
+    kv.append(s(width_key) + struct.pack("<I", 4) + struct.pack("<I", width))
+    with open(path, "wb") as f:
+        f.write(b"GGUF" + struct.pack("<IQQ", version, 0, len(kv)) + b"".join(kv))
+
+
+class TheHeaderSaysWhichProjectorFits(unittest.TestCase):
+    """A user dropped an E2B model into a folder that had E4B and its projector. Every name
+    involved says `gemma` and `4`, so the E2B got the E4B projector, and llama-server exited with
+    code 1 behind a hidden window. The report was "the small model does not work".
+
+    The headers settle it -- E2B and its projector are 1536 wide, E4B and its projector 2560 --
+    and llama-server itself refuses any pair that differs. So a pair the headers say cannot start
+    is never offered, and the message says which file belongs to what.
+    """
+
+    E4B = "gemma-4-E4B-it-Q4_K_M.gguf"
+    E2B = "gemma-4-E2B-it-Q4_0.gguf"
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def model(self, name, width):
+        fake_gguf(os.path.join(self.d, name), "gemma4", "gemma4.embedding_length", width)
+
+    def projector(self, name, width):
+        fake_gguf(os.path.join(self.d, name), "clip", "clip.vision.projection_dim", width)
+
+    def the_reported_folder(self):
+        self.model(self.E4B, 2560)
+        self.projector("mmproj-BF16.gguf", 2560)
+        self.model(self.E2B, 1536)
+
+    def test_the_header_says_how_wide(self):
+        self.model(self.E2B, 1536)
+        self.projector("mmproj-E2B-BF16.gguf", 1536)
+        self.assertEqual(server.gguf_width(os.path.join(self.d, self.E2B)), 1536)
+        self.assertEqual(server.gguf_width(os.path.join(self.d, "mmproj-E2B-BF16.gguf")), 1536,
+                         "read the vision tower's own width instead of what it hands over")
+
+    def test_a_header_it_cannot_read_is_no_answer_rather_than_a_wrong_one(self):
+        p = os.path.join(self.d, "x.gguf")
+        io.open(p, "wb").write(b"x")
+        self.assertIsNone(server.gguf_width(p))
+        fake_gguf(p, "gemma4", "gemma4.embedding_length", 1536)
+        io.open(p, "r+b").truncate(40)
+        self.assertIsNone(server.gguf_width(p))
+        fake_gguf(p, "gemma4", "gemma4.embedding_length", 1536, version=1)
+        self.assertIsNone(server.gguf_width(p))
+        self.assertIsNone(server.gguf_width(os.path.join(self.d, "missing.gguf")))
+
+    def test_the_reported_folder_refuses_the_pair_and_says_what_to_get(self):
+        self.the_reported_folder()
+        with self.assertRaises(SystemExit) as e:
+            server.resolve_model(self.E2B, self.d)
+        said = str(e.exception)
+        self.assertIn("1536", said)
+        self.assertIn("2560", said)
+        self.assertIn("--model-name e2b", said)
+
+    def test_and_the_model_that_owns_the_projector_still_starts(self):
+        self.the_reported_folder()
+        self.assertEqual(os.path.basename(server.resolve_model(self.E4B, self.d)[1]),
+                         "mmproj-BF16.gguf")
+
+    def test_shared_words_in_a_name_are_not_a_match(self):
+        """`gemma` and `4` are in both names, which is two tokens of agreement for the wrong
+        model -- enough to win the name contest when the right projector is absent."""
+        self.model(self.E2B, 1536)
+        self.projector("mmproj-gemma-4-E4B-it-BF16.gguf", 2560)
+        with self.assertRaises(SystemExit):
+            server.resolve_model(self.E2B, self.d)
+
+    def test_two_projectors_with_no_names_are_told_apart_by_what_they_say(self):
+        """What names alone had to refuse -- two projectors that say nothing -- the headers
+        answer. This is the folder a person makes by downloading both by hand."""
+        self.the_reported_folder()
+        self.projector("mmproj-BF16 (1).gguf", 1536)
+        self.assertEqual(os.path.basename(server.resolve_model(self.E2B, self.d)[1]),
+                         "mmproj-BF16 (1).gguf")
+        self.assertEqual(os.path.basename(server.resolve_model(self.E4B, self.d)[1]),
+                         "mmproj-BF16.gguf")
+
+    def test_the_picker_offers_what_the_start_would_accept(self):
+        """The picker is the path this user took -- two models in the folder opens it -- and it
+        used to call the matcher without the rest of the folder, let alone the headers."""
+        self.the_reported_folder()
+        got = {w: (p, why) for w, p, why in server.pairs(self.d)}
+        self.assertEqual(got[self.E4B][0], "mmproj-BF16.gguf")
+        self.assertIsNone(got[self.E2B][0])
+        self.assertIn("--model-name e2b", got[self.E2B][1])
+
+    def test_the_server_is_not_launched_with_a_pair_that_cannot_start(self):
+        self.the_reported_folder()
+        exe = os.path.join(self.d, server.EXE)
+        io.open(exe, "wb").write(b"x")
+        launched = []
+
+        class FakePopen(object):
+            def __init__(self, cmd, **kw):
+                launched.append(cmd)
+
+        import subprocess as sp
+        real = sp.Popen
+        sp.Popen = FakePopen
+        try:
+            with self.assertRaises(SystemExit) as e:
+                server.start(model=os.path.join(self.d, self.E2B),
+                             mmproj=os.path.join(self.d, "mmproj-BF16.gguf"), exe=exe)
+            self.assertIn("not a pair", str(e.exception))
+            self.assertEqual(launched, [])
+            server.start(model=os.path.join(self.d, self.E4B),
+                         mmproj=os.path.join(self.d, "mmproj-BF16.gguf"), exe=exe)
+            self.assertEqual(len(launched), 1, "a pair that fits must still start")
+        finally:
+            sp.Popen = real
+
+
 class TheModelCatalog(unittest.TestCase):
     """Downloading a second model by hand is a trap, so the tool does it.
 

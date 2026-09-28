@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -42,12 +43,12 @@ CATALOG = {
     "e4b": {"repo": "unsloth/gemma-4-E4B-it-GGUF",
             "weights": "gemma-4-E4B-it-Q4_K_M.gguf",
             "mmproj": "mmproj-BF16.gguf", "save_as": "mmproj-BF16.gguf",
-            "gb": 5.9,
+            "gb": 5.9, "width": 2560,
             "note": "the default. Steadier on names it has to spell."},
     "e2b": {"repo": "unsloth/gemma-4-E2B-it-GGUF",
             "weights": "gemma-4-E2B-it-Q4_K_M.gguf",
             "mmproj": "mmproj-BF16.gguf", "save_as": "mmproj-E2B-BF16.gguf",
-            "gb": 4.1,
+            "gb": 4.1, "width": 1536,
             "note": "smaller and faster: 0.66 s a line against 1.07 s, and 1.6 GB"
                     " more of the card left to the game. Measured on 21 frames each."},
 }
@@ -460,7 +461,83 @@ def _tokens(name):
     return [t for t in out if t not in ("gguf", "it", "bf16", "f16", "f32")]
 
 
-def match_projector(weight, projectors, weights=None):
+# GGUF value types that are one fixed-size number, by their type id in the header.
+_GGUF_FIXED = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
+               10: "<Q", 11: "<q", 12: "<d"}
+_GGUF_INTS = (0, 1, 2, 3, 4, 5, 10, 11)
+
+
+def _gguf_str(f):
+    n = struct.unpack("<Q", f.read(8))[0]
+    return f.read(n).decode("utf-8")
+
+
+def _gguf_skip(f, kind):
+    if kind in _GGUF_FIXED:
+        f.seek(struct.calcsize(_GGUF_FIXED[kind]), 1)
+    elif kind == 8:
+        f.seek(struct.unpack("<Q", f.read(8))[0], 1)
+    elif kind == 9:
+        sub, n = struct.unpack("<IQ", f.read(12))
+        if sub in _GGUF_FIXED:
+            f.seek(n * struct.calcsize(_GGUF_FIXED[sub]), 1)
+        else:
+            for _ in range(n):
+                _gguf_skip(f, sub)
+    else:
+        raise ValueError("unknown GGUF value type %d" % kind)
+
+
+def gguf_width(path):
+    """The width a model file talks in, read from its own header. -> int, or None
+
+    A text model's is `<architecture>.embedding_length`. A vision projector's is
+    `clip.vision.projection_dim` -- the width of what it hands the text model. The two must be
+    equal, and llama-server checks: a pair that differs exits with code 1 before it opens a port.
+    Measured on the files `setup` fetches -- E2B 1536 and its projector 1536, E4B 2560 and its
+    projector 2560 -- and on a user's folder, 2026-09-27, where an E2B dropped in by hand had been
+    paired with the E4B projector because the names could not tell them apart.
+
+    NAMES CANNOT. `gemma` and `4` are in both models' names and in any projector named after
+    either, so name matching hands E2B the E4B projector whenever E2B's own is missing. The
+    header is the file saying what it is.
+
+    None means "could not tell" -- not a GGUF, the old version-1 layout, or a family that does
+    not write the key -- and every caller treats that as no evidence either way, never as a
+    mismatch. Only the header is read: the loop stops at the key, which the files seen so far all
+    put ahead of the tokenizer's quarter-million strings.
+    """
+    try:
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                return None
+            version, _tensors, count = struct.unpack("<IQQ", f.read(20))
+            if version < 2:
+                return None
+            arch = None
+            for _ in range(count):
+                key = _gguf_str(f)
+                kind = struct.unpack("<I", f.read(4))[0]
+                if key == "general.architecture" and kind == 8:
+                    arch = _gguf_str(f)
+                    continue
+                if kind in _GGUF_INTS and (key == "clip.vision.projection_dim"
+                                           or (arch and key == arch + ".embedding_length")):
+                    fmt = _GGUF_FIXED[kind]
+                    return int(struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0])
+                _gguf_skip(f, kind)
+    except (OSError, ValueError, struct.error, UnicodeDecodeError):
+        return None
+    return None
+
+
+def _fits(weight_path, projector_path):
+    """False only when BOTH headers answered and the answers differ."""
+    a, b = gguf_width(weight_path), gguf_width(projector_path)
+    return a is None or b is None or a == b
+
+
+def match_projector(weight, projectors, weights=None, folder=None):
     """Pick the projector that belongs to a given model file.
 
     A vision model is two files, and they must be from the same model. Pairing them wrongly
@@ -483,7 +560,16 @@ def match_projector(weight, projectors, weights=None):
     the folder should be refused, not handed over. Elimination says that; the shortcut
     says "there is only one, take it" and produces a server that answers text and reads
     pictures out of nothing.
+
+    `folder` is where the files are, and with it the headers get a veto: a projector whose
+    width differs from the model's is dropped before any name is compared, because no name can
+    make that pair start (see `gguf_width`). It is a veto and nothing more -- two files of the
+    same width are not proven to belong together, so the rules above still choose among the
+    projectors that are left.
     """
+    if folder:
+        projectors = [p for p in projectors
+                      if _fits(os.path.join(folder, weight), os.path.join(folder, p))]
     if not projectors:
         return None
     want = set(_tokens(weight))
@@ -531,13 +617,48 @@ def resolve_model(choice=None, dest_dir=None):
     else:
         raise SystemExit("more than one model in %s -- pick one with --model-file:\n  %s"
                          % (d, "\n  ".join(weights)))
-    proj = match_projector(weight, projectors, weights)
+    proj = match_projector(weight, projectors, weights, d)
     if not proj:
-        raise SystemExit(
-            "found %s but no projector to go with it.\n"
-            "A vision model is two files: the weights and an mmproj-*.gguf. Without the second\n"
-            "one the server starts, answers text, and fails on every picture." % weight)
+        raise SystemExit(_no_projector(weight, projectors, d))
     return os.path.join(d, weight), os.path.join(d, proj)
+
+
+def pairs(dest_dir=None):
+    """Every model in the folder with the projector it would start with.
+    -> [(weight, projector or None, why there is none or "")]
+
+    The picker's list. It asks the same question `resolve_model` asks, through the same
+    function, so the window can never offer a pair that the start then refuses -- or start a
+    pair the header already said cannot work -- and it gives the same reason in the same words.
+    """
+    d = dest_dir or home("models")
+    weights, projectors = list_models(d)
+    out = []
+    for w in weights:
+        p = match_projector(w, projectors, weights, d)
+        out.append((w, p, "" if p else _no_projector(w, projectors, d)))
+    return out
+
+
+def _no_projector(weight, projectors, d):
+    """Why there is no projector for `weight`, in words that say what to do next."""
+    want = gguf_width(os.path.join(d, weight))
+    wrong = [(p, gguf_width(os.path.join(d, p))) for p in projectors]
+    wrong = [(p, w) for p, w in wrong if want and w and w != want]
+    if not wrong:
+        return ("found %s but no projector to go with it.\n"
+                "A vision model is two files: the weights and an mmproj-*.gguf. Without the second\n"
+                "one the server starts, answers text, and fails on every picture." % weight)
+    lines = ["%s has no projector that fits it." % weight,
+             "Its header says it is %d wide, and a projector has to match:" % want]
+    lines += ["  %s is %d wide -- it belongs to a different model" % (p, w) for p, w in wrong]
+    same = [k for k, e in CATALOG.items() if e.get("width") == want]
+    if same:
+        lines.append("This looks like %s. Get the pair that goes together with:\n"
+                     "  python -m gamesubs setup --model-name %s" % (same[0].upper(), same[0]))
+    else:
+        lines.append("Download the mmproj-*.gguf published beside this model and put it in\n  %s" % d)
+    return "\n".join(lines)
 
 
 def _probe_png():
@@ -708,6 +829,14 @@ def start(model=None, mmproj=None, exe=None, port=8080, extra=None, quiet=True):
         model, mmproj = local_model()
         if not model:
             raise SystemExit("no model found. Run:  python -m gamesubs setup")
+    if mmproj and not _fits(model, mmproj):
+        # Both routes here -- the picker and `resolve_model` -- already asked the header. This is
+        # for the route that gets added later and does not: the last place a mismatch can be said
+        # in words, because after it the only report is llama-server exiting with code 1 behind a
+        # hidden window.
+        raise SystemExit("%s (%s wide) and %s (%s wide) are not a pair -- the projector belongs "
+                         "to a different model." % (os.path.basename(model), gguf_width(model),
+                                                    os.path.basename(mmproj), gguf_width(mmproj)))
     cmd = [exe, "-m", model, "--mmproj", mmproj, "--port", str(port),
            "--host", "127.0.0.1"] + FLAGS + list(extra or [])
     print("starting: %s\n  model: %s" % (os.path.basename(exe), os.path.basename(model)))

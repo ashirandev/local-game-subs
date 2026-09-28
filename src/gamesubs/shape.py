@@ -43,6 +43,7 @@ three hand-picked fonts and silently mangles the other hundred-odd. For a progra
 output is Thai text, correct shaping is not a nicety.
 """
 import functools
+import io
 import os
 
 try:
@@ -69,7 +70,13 @@ def _hb_font(path, size):
 
 @functools.lru_cache(maxsize=16)
 def _ft_face(path, size):
-    face = freetype.Face(path)
+    # Handed the file's bytes, never its path. freetype-py passes a str path to FreeType as UTF-8,
+    # and FreeType on Windows opens it with the ANSI codepage: any folder with a Thai name in it
+    # (C:\Users\<a Thai name>\Downloads\...) fails with "cannot open resource". Its own fallback
+    # only fires on a UnicodeError, which never happens -- the encode succeeds, the open fails.
+    # A user hit this on 2026-09-27; HarfBuzz and Pillow open the same path fine.
+    with open(path, "rb") as f:
+        face = freetype.Face(io.BytesIO(f.read()))
     face.set_pixel_sizes(0, int(size))
     return face
 

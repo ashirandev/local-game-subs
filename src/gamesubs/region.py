@@ -28,6 +28,8 @@ TWO THINGS THIS HAS TO GET RIGHT, and neither is obvious:
     a selector that forgets to add the window's own origin is correct on a single monitor and
     quietly wrong on the setup that needed it most.
 """
+import ctypes
+import sys
 import tkinter as tk
 
 DIM = 0.35              # how much of the screen is greyed out while choosing
@@ -189,12 +191,35 @@ def keep_on_screen(box, virtual):
     return (int(l), int(t), int(w), int(h))
 
 
+def real_pixels():
+    """Count screen positions in real pixels in this process, as the capture does. Call before any window.
+
+    Why (2026-10-14, a player on a laptop): the box is drawn and read in real pixels, because mss
+    switches its own process to them the moment it is created. The subtitle window is another
+    process, and without this Windows hands it "scaled" pixels: at 150% display scaling every
+    position it is given is multiplied by 1.5 on the way to the screen. The plate opened 1.5 times
+    further right and down than the box -- in a corner, half off the screen -- on every laptop,
+    because laptops ship at 125-150%, and on no desktop at 100%, which is every PC it was tested on.
+    Per-monitor (2), as mss asks for, so a second screen at another scale is counted the same way.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)      # refused, harmlessly, if already set
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()      # before Windows 8.1
+        except (AttributeError, OSError):
+            pass
+
+
 def select(virtual, existing=None, monitors=None):
     """Show the selector over `virtual` (an mss-style all-monitors rect).
 
     Returns (left, top, width, height) in screen pixels, or None if cancelled.
     """
     ox, oy = virtual["left"], virtual["top"]
+    real_pixels()       # mss has usually done it already; the box must not depend on that order
     root = tk.Tk()
     root.overrideredirect(True)
     root.geometry("%dx%d+%d+%d" % (virtual["width"], virtual["height"], ox, oy))

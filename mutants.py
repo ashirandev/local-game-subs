@@ -394,6 +394,12 @@ MUTANTS = [
     ("pc.py", '"nothing is sent anywhere):" % __version__]',
      '"nothing is sent anywhere):" % "?"]',
      'a screenshot no longer says which version, so nobody can tell who has the fix'),
+    # 2026-10-14: a laptop at 150% saw the plate in a corner, off the screen.
+    ("overlay.py", "        real_pixels()" + NL + "        self.root = tk.Tk()", "        self.root = tk.Tk()",
+     'the subtitle window counts scaled pixels: on a 150% laptop it opens 1.5 times right and down of the box'),
+    ("region.py", "        ctypes.windll.shcore.SetProcessDpiAwareness(2)      # refused, harmlessly, if already set",
+     "        ctypes.windll.shcore.SetProcessDpiAwareness(1)      # refused, harmlessly, if already set",
+     'system-wide instead of per monitor: a second screen at another scale is counted wrong'),
 ]
 
 

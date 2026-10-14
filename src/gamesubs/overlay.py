@@ -45,6 +45,7 @@ import urllib.request
 from PIL import ImageTk
 
 from . import render
+from .region import real_pixels
 from .server import app_dir, home, load_font, load_tuning, settings_stamp
 
 POLL_MS = 150
@@ -83,6 +84,8 @@ class Overlay:
         self._shown = None
         self._moved = False
 
+        # Before the window exists: the box this window is placed on is in real pixels (region.py).
+        real_pixels()
         self.root = tk.Tk()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)

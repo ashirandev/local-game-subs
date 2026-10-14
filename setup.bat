@@ -12,7 +12,9 @@ set PYTHONPATH=%~dp0src;%PYTHONPATH%
 set PYTHONIOENCODING=utf-8
 set VENVPY=%~dp0.venv\Scripts\python.exe
 
-python --version >nul 2>&1
+REM `call`, because `python` can be a batch file (pyenv-win puts one on PATH). Run without `call`,
+REM cmd hands the rest of this file to it and never comes back: the window closes without a word.
+call python --version >nul 2>&1
 if errorlevel 1 (
   echo Python is not installed, or it was installed without "Add Python to PATH".
   echo Get it from https://www.python.org/downloads/ and tick that box during setup.
@@ -23,7 +25,7 @@ if errorlevel 1 (
 
 if exist "%VENVPY%" goto haveenv
 echo Creating a private Python inside this folder ^(.venv^)...
-python -m venv "%~dp0.venv"
+call python -m venv "%~dp0.venv"
 if errorlevel 1 (
   echo Could not create the virtual environment.
   echo.

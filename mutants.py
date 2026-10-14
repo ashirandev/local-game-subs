@@ -431,6 +431,11 @@ MUTANTS = [
     ("pc.py", '    return [c for c in cards if c.get("integrated") or c.get("used_mb") is not None',
      '    return [c for c in cards if True',
      'the copy without a reading is kept beside the card'),
+    # setup.bat sits at the top of the repo, not in src/gamesubs, hence the path
+    ("../../setup.bat", "call python --version >nul 2>&1", "python --version >nul 2>&1",
+     'a python that is a batch file (pyenv) takes the run with it: setup.bat closes without a word'),
+    ("../../setup.bat", 'call python -m venv "%~dp0.venv"', 'python -m venv "%~dp0.venv"',
+     'the private Python gets made and setup.bat never comes back to install anything into it'),
 ]
 
 

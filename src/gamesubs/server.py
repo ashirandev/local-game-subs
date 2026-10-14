@@ -24,6 +24,7 @@ The numbers in FLAGS are not guesses either:
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -32,7 +33,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import service
+from . import pc, service
 
 # The models this tool knows how to fetch. A link in a readme is not the same thing: every
 # gemma-4 projector is published as `mmproj-BF16.gguf`, so downloading a second model BY HAND
@@ -44,15 +45,19 @@ CATALOG = {
             "weights": "gemma-4-E4B-it-Q4_K_M.gguf",
             "mmproj": "mmproj-BF16.gguf", "save_as": "mmproj-BF16.gguf",
             "gb": 5.9, "width": 2560,
-            "note": "the default. Steadier on names it has to spell."},
+            "note": "steadier on names it has to spell; a third slower, and 1.6 GB more of the card."},
     "e2b": {"repo": "unsloth/gemma-4-E2B-it-GGUF",
             "weights": "gemma-4-E2B-it-Q4_K_M.gguf",
             "mmproj": "mmproj-BF16.gguf", "save_as": "mmproj-E2B-BF16.gguf",
             "gb": 4.1, "width": 1536,
-            "note": "smaller and faster: 0.66 s a line against 1.07 s, and 1.6 GB"
+            "note": "the default. 0.66 s a line against 1.07 s, and 1.6 GB"
                     " more of the card left to the game. Measured on 21 frames each."},
 }
-DEFAULT_MODEL = "e4b"
+# E2B since 1.0.2 (2026-10-14). It reads the same words as E4B in 6 of 7 scenes, a third faster,
+# and the card is shared with a game: 3.0 GB in use against 4.6 GB (Vulkan, 8k, measured that
+# day). The first two reports from players were both a server that stopped at start, and the one
+# reproduced here was a card out of memory. E4B's edge is spelling names: worth choosing, not a default.
+DEFAULT_MODEL = "e2b"
 HF = "https://huggingface.co/%s/resolve/main"
 
 # What `setup` fetches with no arguments. Kept as plain names because the rest of the module
@@ -66,7 +71,14 @@ IMG_CEIL = 1120
 IMG_FLOOR = 280
 IMG_UB = IMG_CEIL + 32          # derived, never a literal -- see the note above
 
-FLAGS = ["-c", "8192", "-np", "1", "-ngl", "99", "-fa", "on",
+# No -ngl. With "-ngl 99" llama.cpp is told to put every layer on the card and refuses to fit:
+# on a card with too little free memory it says "failed to fit params to free device memory:
+# n_gpu_layers already set by user to 99, abort" and exits with code 1 -- which is all a player
+# saw (2026-10-14, a report to the page). Left out, llama.cpp fits the model to the free memory
+# itself. Measured the same day on an RTX 5070 Ti, Vulkan, this model at 8k: 4577 MB used with
+# and without it, so a card with room keeps every layer and the same speed; a request that died
+# with it (-c 1048576) started without it.
+FLAGS = ["-c", "8192", "-np", "1", "-fa", "on",
          "-b", str(IMG_UB), "-ub", str(IMG_UB),
          "--image-min-tokens", str(IMG_FLOOR), "--image-max-tokens", str(IMG_CEIL),
          # Leaving this out cost 4x. With reasoning on, the model writes out its thinking before
@@ -418,7 +430,7 @@ def fetch_model(dest_dir=None, which=None):
     with a file of almost exactly the same size.
     """
     d = dest_dir or home("models")
-    key = (which or DEFAULT_MODEL).lower()
+    key = (which or setup_default(d)).lower()
     if key not in CATALOG:
         raise SystemExit("no model called %r. Known: %s"
                          % (which, ", ".join(sorted(CATALOG))))
@@ -439,6 +451,18 @@ def fetch_model(dest_dir=None, which=None):
     p = download("%s/%s" % (base, e["mmproj"]), os.path.join(d, e["save_as"]),
                  e["save_as"], sums.get(e["mmproj"]))
     return m, p
+
+
+def setup_default(dest_dir=None):
+    """Which model `setup` with no name means: the catalog model already in the folder, else the default.
+
+    Since the default moved to E2B, a player who has E4B and is told "run setup again: it checks
+    every file and downloads what is broken" would otherwise get a second model of 4 GB, and the
+    broken one left as it was. Setup repairs what you have; it does not swap it.
+    """
+    d = dest_dir or home("models")
+    have = [k for k, e in CATALOG.items() if os.path.isfile(os.path.join(d, e["weights"]))]
+    return DEFAULT_MODEL if (DEFAULT_MODEL in have or not have) else sorted(have)[0]
 
 
 def local_model(dest_dir=None):
@@ -688,8 +712,7 @@ def wait_until_it_can_see(base_url, model="local", timeout=300, proc=None):
     png, last = _probe_png(), "no attempt yet"
     while time.time() < end:
         if proc is not None and proc.poll() is not None:
-            raise SystemExit("the model server exited (code %s) before it was ready. Run it by "
-                             "hand to see why." % proc.returncode)
+            raise SystemExit(_stopped(proc))
         try:
             vc.ask("Reply with the single word: ok", image=png, max_tokens=16)
             return True
@@ -698,7 +721,8 @@ def wait_until_it_can_see(base_url, model="local", timeout=300, proc=None):
         time.sleep(2)
     raise SystemExit("the server never answered a question about an image.\n  last error: %s\n"
                      "  The usual cause is a missing or mismatched --mmproj: a server without one "
-                     "starts fine, answers text, and fails only on pictures." % last)
+                     "starts fine, answers text, and fails only on pictures.\n%s"
+                     % (last, pc.block(engine_line(getattr(proc, "args", [None])[0]))))
 
 
 
@@ -840,5 +864,113 @@ def start(model=None, mmproj=None, exe=None, port=8080, extra=None, quiet=True):
     cmd = [exe, "-m", model, "--mmproj", mmproj, "--port", str(port),
            "--host", "127.0.0.1"] + FLAGS + list(extra or [])
     print("starting: %s\n  model: %s" % (os.path.basename(exe), os.path.basename(model)))
-    out = subprocess.DEVNULL if quiet else None
-    return subprocess.Popen(cmd, stdout=out, stderr=out)
+    if not quiet:
+        return subprocess.Popen(cmd)
+    # Never DEVNULL. The server says why it stopped, and throwing that away left a player with
+    # "exited (code 1). Run it by hand to see why" -- which nobody does. Kept in the folder, one
+    # file, overwritten each start, never sent anywhere.
+    log = open(server_log(), "w", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+    log.close()                     # the server holds its own handle; ours is not needed
+    proc.log_path = log.name
+    return proc
+
+
+def server_log():
+    return os.path.join(home("logs"), "llama-server.log")
+
+
+# What the server's own words mean, for a player. (words to look for, why, what to try). The first
+# row is a measured message (2026-10-14, Vulkan, a card out of memory); the rest are llama.cpp's
+# wording for the other ways a start fails. Lower case, matched anywhere in the log.
+WHY = [
+    (("erroroutofdevicememory", "failed to allocate", "out of memory", "failed to fit params"),
+     "the graphics card ran out of memory for this model.",
+     "Close other programs that use the card (a game that is already running counts). On E4B,\n"
+     "  the smaller E2B in the settings window needs 1.6 GB less."),
+    (("no vulkan devices", "vulkan: no devices", "failed to initialize vulkan", "vk::createinstance",
+      "no usable gpu"),
+     "no graphics card that the engine can use was found.",
+     "Update the graphics driver from NVIDIA, AMD or Intel and try again."),
+    (("unknown model architecture",),
+     "this llama.cpp is too old for the model.",
+     "Run setup again to get a newer llama.cpp."),
+    # Not a bare "flash_attn": some builds print "flash_attn = auto" on every healthy start.
+    (("flash attention is not supported", "flash_attn is not supported", "flash attention not supported"),
+     "the graphics card cannot run the engine's fast attention.",
+     "Update the graphics driver. If that does not help, send the file below."),
+    (("failed to load model", "gguf_init", "invalid magic"),
+     "the model file could not be read; it may be incomplete.",
+     "Run setup again: it checks every file and downloads what is broken."),
+]
+# Windows exit codes that carry a meaning of their own, for when the log says nothing we know.
+CODES = {
+    0xC0000409: ("the engine crashed inside the graphics driver or its own code.",
+                 "Update the graphics driver. If it still crashes, send the file below."),
+    0xC000001D: ("this processor lacks an instruction the engine was built for.",
+                 "Run setup with --backend cpu, or send the file below."),
+    0xC0000135: ("a Windows file the engine needs is missing.",
+                 "Install the Microsoft Visual C++ Redistributable (x64), then try again."),
+    0xC0000005: ("the engine crashed (it read memory it should not).",
+                 "Update the graphics driver. If it still crashes, send the file below."),
+}
+
+
+def why_it_stopped(code, text):
+    """(why, what to try) for a server that exited before it was ready, from its own words first
+    and its exit code second. Never empty: an unknown failure still says where its words are."""
+    low = (text or "").lower()
+    for words, why, act in WHY:
+        if any(w in low for w in words):
+            return why, act
+    hit = CODES.get((code or 0) & 0xFFFFFFFF)
+    if hit:
+        return hit
+    return ("the engine stopped and did not say why in words this program knows.",
+            "Send the file below when you ask for help.")
+
+
+def _stopped(proc):
+    code = proc.returncode
+    path = getattr(proc, "log_path", None)
+    text = ""
+    if path:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            pass
+    why, act = why_it_stopped(code, text)
+    shown = "%s (0x%08X)" % (code, code & 0xFFFFFFFF) if code and code > 255 else str(code)
+    msg = ["the model server stopped before it was ready (code %s)." % shown,
+           "  why: %s" % why, "  what to try: %s" % act]
+    tail = [l for l in text.splitlines() if l.strip()][-8:]
+    if tail:
+        msg += ["  the server's last words:"] + ["    " + l[:150] for l in tail]
+    if path:
+        msg.append("  all of them: %s" % path)
+    # Beside the error, not only at the top of the console: by the time it stops, the start of the
+    # window has scrolled away, and this screenshot is the one a player sends.
+    args = getattr(proc, "args", None)
+    msg.append(pc.block(engine_line(args[0] if args else None)))
+    return "\n".join(msg)
+
+
+def engine_line(exe):
+    """'llama.cpp vulkan, build 10796': which build from its folder, which version from the server.
+
+    Asked with --version (0.9 s), because the server's log does not say: build 10796 starts
+    straight in with its settings (measured 2026-10-14), and "is this llama.cpp too old for the
+    model" is a question a screenshot should answer.
+    """
+    if not exe:
+        return None
+    build = None
+    try:
+        out = subprocess.run([exe, "--version"], capture_output=True, timeout=15,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        build = re.search(r"\bbuild (\d+)", (out.stdout + out.stderr).decode("utf-8", "replace"))
+    except Exception:
+        pass
+    return "llama.cpp %s%s" % (backend_of(exe) or os.path.dirname(exe),
+                               ", build %s" % build.group(1) if build else "")

@@ -17,7 +17,7 @@ The first run tells you what it needs and waits:
   This is the first run, so there are two things to fetch before anything can start:
 
     llama.cpp   the program that runs the model             about 34 MB
-    the model   what reads your screen and translates       about 5.9 GB
+    the model   what reads your screen and translates       about 4.1 GB
 
   Press ENTER to fetch them now, or type N and press ENTER to cancel:
 ```
@@ -174,10 +174,10 @@ and reused, so what you are reading stops rewriting itself.
 work and override the window for that run. `--no-panel` starts without it.
 
 **Trying a different model.** `python -m gamesubs models` lists what is installed, what else
-this tool can fetch, and the link for each. `python -m gamesubs setup --model-name e2b` gets
-the small one — it is about a third faster (0.66 s a line against 1.07 s, measured 21 reads
-each) and leaves 1.6 GB more of the graphics card to the game, at the cost of being a little
-less reliable on names it has to spell out. Once there is more than one model in the folder,
+this tool can fetch, and the link for each. The default is the small one, E2B: about a third
+faster (0.66 s a line against 1.07 s, measured 21 reads each), and it leaves 1.6 GB more of the
+graphics card to the game. `python -m gamesubs setup --model-name e4b` gets the bigger one,
+which is a little more reliable on names it has to spell out. Once there is more than one model in the folder,
 a chooser appears at the start of every run.
 
 Download them with that command rather than by hand: every gemma-4 projector is published

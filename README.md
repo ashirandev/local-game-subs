@@ -48,8 +48,8 @@ with pictures, no command line. The rest of this page is how it works and how it
 
 | | |
 |---|---|
-| **GPU** | ~6 GB of free VRAM. Measured use with the model, its vision projector and an 8k context: **4.85 GB** |
-| **Disk** | about 6.5 GB, all of it inside the program's own folder |
+| **GPU** | ~4 GB of free VRAM. Measured use with the default model (E2B), its vision projector and an 8k context: **3.0 GB** — E4B: **4.6 GB** (Vulkan, RTX 5070 Ti, 2026-10-14) |
+| **Disk** | about 4.5 GB, all of it inside the program's own folder |
 | **OS** | Windows for the click-through overlay. The capture and translation halves are cross-platform |
 | **Python** | 3.8 or newer |
 
@@ -104,12 +104,12 @@ Everything is free. `gamesubs setup` fetches the model for you, but if you would
 |---|---|---|
 | **Python** | [python.org/downloads](https://www.python.org/downloads/) — tick *Add Python to PATH* | ~30 MB |
 | **llama.cpp** | `setup` fetches this for you. By hand: [github.com/ggml-org/llama.cpp/releases](https://github.com/ggml-org/llama.cpp/releases) — take the newest **b-numbered** release, not the one GitHub labels *Latest* (that tag carries no binaries), and pick `bin-win-cuda-*` **plus** its matching `cudart-*` runtime zip, or `bin-win-vulkan-*` on its own | 34–515 MB |
-| **The model** | [gemma-4-E4B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf) | 4.7 GB |
-| **Vision projector** | [mmproj-BF16.gguf](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-BF16.gguf) | 945 MB |
-| (both, same page) | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) | |
-| **A smaller, faster model** | [unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF) — take `gemma-4-E2B-it-Q4_K_M.gguf` **and that page’s own `mmproj-BF16.gguf`**, then rename the projector to `mmproj-E2B-BF16.gguf` before saving it beside the other one | 4.1 GB |
+| **The model** | [gemma-4-E2B-it-Q4_K_M.gguf](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf) | 2.9 GB |
+| **Vision projector** | [mmproj-BF16.gguf](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-BF16.gguf) — save it as `mmproj-E2B-BF16.gguf` | 941 MB |
+| (both, same page) | [unsloth/gemma-4-E2B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF) | |
+| **A bigger model, steadier on names** | [unsloth/gemma-4-E4B-it-GGUF](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF) — take `gemma-4-E4B-it-Q4_K_M.gguf` **and that page’s own `mmproj-BF16.gguf`** | 5.9 GB |
 
-`gamesubs models` prints this table with the links, says which you already have, and `gamesubs setup --model-name e2b` downloads a pair and names it correctly.
+`gamesubs models` prints this table with the links, says which you already have, and `gamesubs setup --model-name e4b` downloads a pair and names it correctly.
 
 ⚠️ **Both models publish their projector as `mmproj-BF16.gguf`.** Keep two models and download the second one by hand, and it lands on top of the first model’s projector — same name, within a few MB of the same size — and that model then reads every frame as blank with nothing on screen to say why. `setup --model-name` renames it for you, which is why it exists.
 
@@ -172,7 +172,7 @@ local-game-subs   setup.bat  play.bat        <- what you double-click
    src\  tests```
 
 Nothing is written to your home folder, your registry, or your system Python. **Uninstalling is
-deleting the folder**, and that really is all of it — no 6 GB left behind in a hidden directory
+deleting the folder**, and that really is all of it — no 4 GB left behind in a hidden directory
 after the tool that put it there is gone.
 
 Move the folder anywhere and it keeps working. Want the big files somewhere else — a second
@@ -205,9 +205,15 @@ answers questions about text, and then fails on every single frame.
 **No git, no pip, no command line:** press *Code -> Download ZIP* at the top of this page,
 unzip it, and double-click **`play.bat`**.
 
-On the first run it says what it needs — llama.cpp and the model, about 6 GB — and waits for
+On the first run it says what it needs — llama.cpp and the model, about 4 GB — and waits for
 you to press Enter before fetching anything. Then it starts. Every run after that starts
 straight away. It all goes into that one folder, so uninstalling is deleting it.
+
+**Updating to a new version:** download the ZIP again and copy what is inside it over the folder
+you already have (the one with `play.bat` in it), choosing *Replace*. The model, llama.cpp and
+your settings are not in the ZIP, so they stay, and nothing is downloaded again — the model you
+were using is still the one it starts. Which version you have is the first line `play.bat`
+prints, and the title of the settings window.
 
 Step by step, with pictures: **[GUIDE.md](GUIDE.md)**. `setup.bat` is still there if you
 would rather download ahead of time, but you no longer have to find it.
@@ -218,7 +224,7 @@ If you would rather use the command line:
 pip install git+https://github.com/ashirandev/local-game-subs.git
 ```
 
-**1. Get everything** — llama.cpp for your GPU plus the model, about 6 GB, resumable, and every
+**1. Get everything** — llama.cpp for your GPU plus the model, about 4 GB, resumable, and every
 step skips itself if it is already done:
 
 ```bash

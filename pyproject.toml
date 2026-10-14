@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-game-subs"
-version = "1.0.1"
+version = "1.0.2"
 description = "Read a game's subtitles off your own screen with a small local vision model and show them translated, in an overlay. One machine, nothing uploaded."
 readme = "README.md"
 requires-python = ">=3.8"

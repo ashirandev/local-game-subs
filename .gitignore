@@ -31,3 +31,6 @@ settings.json
 
 # OCR scratch from the local reader; derived, never shipped.
 _ocr/
+
+# what llama-server said on its last start; kept on the player's PC, never shipped
+logs/

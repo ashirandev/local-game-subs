@@ -11,13 +11,13 @@ if exist "%VENVPY%" goto play
 REM ---------------------------------------------------------------- first run
 REM It used to say "run setup.bat first" and stop. That is a second file to find, in a folder of
 REM thirty, for somebody who has just downloaded a zip and pressed the obvious button. But a
-REM double-click must never quietly pull six gigabytes either, so it says what it is about to do
+REM double-click must never quietly pull four gigabytes either, so it says what it is about to do
 REM and waits to be told.
 echo.
 echo   This is the first run, so there are two things to fetch before anything can start:
 echo.
 echo     llama.cpp   the program that runs the model      about 34 MB
-echo     the model   what reads your screen and translates  about 5.9 GB
+echo     the model   what reads your screen and translates  about 4.1 GB
 echo.
 echo   Both go into THIS folder and nowhere else. Nothing is written to your registry, your
 echo   home folder, or your system Python. Uninstalling is deleting this folder.

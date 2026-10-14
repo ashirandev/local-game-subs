@@ -18,7 +18,7 @@ import os
 import sys
 import time
 
-from . import server
+from . import pc, server
 from .capture import Band, ChangeGate
 from .service import (MIN_HOLD, READ_SPEED, SCHEMA, SNAP, Current, Worker, prompt_for,
                       serve_http)
@@ -251,20 +251,20 @@ started: without one the server loads happily, answers questions about text, and
 single frame -- which looks like this tool is broken rather than like a file is missing.
 
 It must be a model that takes IMAGES. A text-only GGUF, however good, has nothing to read the
-screen with. The default here is gemma-4-E4B (Q4_K_M, about 4.7 GB + 0.9 GB projector), which is
-small enough to leave the graphics card to the game.
+screen with. The default here is gemma-4-E2B (Q4_K_M, about 2.9 GB + 0.9 GB projector), which is
+small enough to leave the graphics card to the game: 3.0 GB in use, against 4.6 GB for E4B.
 
 Bigger is not automatically better for this job: the work is reading one short line off a picture
 and saying it in another language, and a model twice the size mostly buys you a slower subtitle.
 Measured here, 21 reads each over seven scenes: E2B answers in 0.66 s and E4B in 1.07 s,
 and they read the same words. E4B is steadier on names it has to spell (E2B wrote "Racoon
-City"); E2B leaves 1.6 GB more of the card to the game. Try the small one first.
+City"); E2B leaves 1.6 GB more of the card to the game. So the small one is the default.
 
 EASIEST WAY TO GET EITHER ONE -- it downloads both files and names them so they cannot clash:
 
     python -m gamesubs models                  what is here, what else there is, and the links
-    python -m gamesubs setup --model-name e2b  the small fast one
-    python -m gamesubs setup --model-name e4b  the default
+    python -m gamesubs setup --model-name e2b  the small fast one, the default
+    python -m gamesubs setup --model-name e4b  steadier on names it has to spell
 
 IF YOU FETCH ONE BY HAND, RENAME ITS PROJECTOR. They are all published as `mmproj-BF16.gguf`,
 so saving a second one in here either lands on top of the first model's projector or leaves
@@ -347,9 +347,16 @@ def _render(speaker, text, w=1280, h=260):
     return im
 
 
+def _say_the_pc(a):
+    """The card, its memory, the driver and Windows, first thing in the console (see pc.py)."""
+    exe = None if a.base_url else server.find_server(a.llama_server)
+    print(pc.block(server.engine_line(exe)) + "\n")
+
+
 def cmd_check(a):
     """Render subtitles, send them to the model, and say plainly whether this setup works."""
     proc = None
+    _say_the_pc(a)
     try:
         base = a.base_url
         if not base:
@@ -650,6 +657,7 @@ def cmd_play(a):
     proc = ov = pn = None
     try:
         if a.no_panel:
+            _say_the_pc(a)
             font = _choose_font(a)
             if not a.base_url:
                 m, mp = _choose_model(a)
@@ -657,6 +665,7 @@ def cmd_play(a):
         else:
             pn = subprocess.Popen([sys.executable, "-u", "-m", "gamesubs", "panel", "--launcher"],
                                   stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+            _say_the_pc(a)                   # while the window draws, not before it
             print("the settings window is open -- choose a model, a font and the colours,")
             print("then press Start.")
             if not _wait_for_start(pn):

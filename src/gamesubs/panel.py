@@ -31,7 +31,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from . import render, server
+from . import __version__, pc, render, server
 from .fonts import candidates
 from .server import (CHOICES, LIMITS, PLATE_SWATCHES, TEXT_SWATCHES, TUNING, home, list_models,
                      load_font, load_tuning, save_font, save_tuning)
@@ -73,7 +73,7 @@ class Panel:
         self.boxes = {}
 
         self.root = tk.Tk()
-        self.root.title("Subtitle settings")
+        self.root.title("Subtitle settings  (local-game-subs %s)" % __version__)
         self.root.configure(bg=BG)
         self.root.attributes("-topmost", True)
         self.root.resizable(False, False)
@@ -169,8 +169,16 @@ class Panel:
         if self.launcher:
             self.status.pack(fill="x", pady=(12, 0))
             self.set_status("choose what you want, then press Start")
+        # The card, its memory and Windows, on every screenshot of this window (see pc.py). Read
+        # on a thread -- under a second, but a second of a window that has not drawn yet.
+        self.pc_note = tk.Label(wrap, text="this PC: reading...", bg=BG, fg=DIM, anchor="w",
+                                font=("Segoe UI", 8))
+        self.pc_note.pack(fill="x", pady=(8, 0))
         self.idle_note()
         threading.Thread(target=self._listen, daemon=True).start()
+        self._pc_line = None
+        threading.Thread(target=self._read_pc, daemon=True).start()
+        self.root.after(100, self._show_pc)
 
         self.redraw()
 
@@ -194,6 +202,20 @@ class Panel:
                     self.root.after(0, self.set_status, line[7:])
         except Exception:
             pass
+
+    def _read_pc(self):
+        try:
+            self._pc_line = pc.short()
+        except Exception:
+            self._pc_line = "this PC: Windows would not say"
+
+    def _show_pc(self):
+        # The thread never touches Tk: called from another thread before mainloop is running,
+        # tkinter raises instead of queueing. It leaves the line here and Tk's own loop picks it up.
+        if self._pc_line is None:
+            self.root.after(100, self._show_pc)
+        else:
+            self.pc_note.configure(text=self._pc_line)
 
     def idle_note(self):
         self.foot_note.configure(

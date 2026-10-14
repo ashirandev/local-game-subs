@@ -569,13 +569,36 @@ class TheModelCatalog(unittest.TestCase):
 
     def test_a_saved_projector_still_names_its_own_model(self):
         """`save_as` has to carry a fragment `match_projector` can pair on, or renaming it
-        has bought nothing. The default keeps the bare upstream name on purpose -- it is the
-        one that wins by elimination."""
+        has bought nothing. One model keeps the bare upstream name on purpose -- it is the one
+        that wins by elimination. That is E4B, the default until 1.0.2: players' folders already
+        hold its projector under that name, so it stays when the default moves."""
+        bare = [k for k, e in server.CATALOG.items() if e["save_as"] == e["mmproj"]]
+        self.assertLessEqual(len(bare), 1, bare)
         for key, e in server.CATALOG.items():
-            if key == server.DEFAULT_MODEL:
+            if key in bare:
                 continue
             self.assertTrue(set(server._tokens(e["weights"])) & set(server._tokens(e["save_as"])),
                             "%s: %s says nothing about %s" % (key, e["save_as"], e["weights"]))
+
+    def test_setup_repairs_the_model_you_have_and_does_not_swap_it(self):
+        """The default moved to E2B in 1.0.2. A player with E4B told "run setup again" must get
+        E4B checked, not a second 4 GB model with the broken one left beside it."""
+        d = tempfile.mkdtemp()
+        try:
+            self.assertEqual(server.setup_default(d), "e2b", "an empty folder gets the default")
+            io.open(os.path.join(d, server.CATALOG["e4b"]["weights"]), "wb").close()
+            self.assertEqual(server.setup_default(d), "e4b")
+            io.open(os.path.join(d, server.CATALOG["e2b"]["weights"]), "wb").close()
+            self.assertEqual(server.setup_default(d), "e2b", "with both, the default")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_the_first_run_says_the_size_of_what_it_will_fetch(self):
+        """play.bat asks before it downloads, and the number it gives is the default model's."""
+        with io.open(os.path.join(__file__.rsplit("tests", 1)[0], "play.bat"), encoding="utf-8") as f:
+            bat = f.read()
+        self.assertEqual(server.DEFAULT_MODEL, "e2b")
+        self.assertIn("about %.1f GB" % server.CATALOG[server.DEFAULT_MODEL]["gb"], bat)
 
     def test_the_default_is_what_the_module_constants_say(self):
         """Those constants are read by `local_model`, by the tests, and by anything that
@@ -625,6 +648,103 @@ class TheCatalogIsReachableFromTheCommandLine(unittest.TestCase):
         block = body[i:body.index("def cmd_setup(")]
         self.assertIn("server.HF", block, "it lists models without saying where they are")
         self.assertIn("setup --model-name", block)
+
+
+# The words llama.cpp printed when a card ran out of memory (Vulkan, 2026-10-14, forced on an RTX
+# 5070 Ti with a context too large to fit). The exit code was 1 -- the first code a player sent.
+OUT_OF_MEMORY_LOG = """\
+0.02.065.574 W common_fit_params: failed to fit params to free device memory: n_gpu_layers already set by user to 99, abort
+ggml_vulkan: Device memory allocation of size 2147483648 failed.
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+0.09.494.505 E alloc_tensor_range: failed to allocate Vulkan1 buffer of size 2147483648
+0.09.903.818 E llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache
+0.09.905.442 E srv  llama_server: exiting due to model loading error
+"""
+HEALTHY_LOG = "load_model: loading model\nllama_context: flash_attn = auto\nsrv  load_model: initializing\n"
+
+
+class FakeProc(object):
+    def __init__(self, code, log_path):
+        self.returncode, self.log_path = code, log_path
+
+    def poll(self):
+        return self.returncode
+
+
+class WhyItStopped(unittest.TestCase):
+    """A server that stops before it is ready says why, in words a player can act on.
+
+    Why (2026-10-14): two players wrote to the page with nothing but "the model server exited
+    (code 1)" and "(code 3221226505) before it was ready. Run it by hand to see why." The server had
+    said why both times; the program sent its words to DEVNULL.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.log = os.path.join(self.d, "llama-server.log")
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def write(self, text):
+        with open(self.log, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def test_every_layer_is_not_forced_onto_the_card(self):
+        # "-ngl 99" made llama.cpp refuse to fit a small card and exit with code 1. Without it the
+        # same card keeps every layer (4577 MB either way on 16 GB) and a small one still starts.
+        self.assertNotIn("-ngl", server.FLAGS)
+
+    def test_the_measured_out_of_memory_words_are_read_as_memory(self):
+        why, act = server.why_it_stopped(1, OUT_OF_MEMORY_LOG)
+        self.assertIn("ran out of memory", why)
+        self.assertIn("E2B", act)
+
+    def test_the_crash_code_speaks_when_the_words_do_not(self):
+        why, act = server.why_it_stopped(3221226505, HEALTHY_LOG)
+        self.assertIn("crashed", why)
+        self.assertIn("driver", act)
+
+    def test_a_healthy_line_about_fast_attention_is_not_blamed(self):
+        why, _act = server.why_it_stopped(1, HEALTHY_LOG)
+        self.assertNotIn("attention", why)
+
+    def test_the_message_carries_the_reason_the_last_words_and_the_file(self):
+        self.write(OUT_OF_MEMORY_LOG)
+        with self.assertRaises(SystemExit) as e:
+            server.wait_until_it_can_see("http://127.0.0.1:9", proc=FakeProc(1, self.log), timeout=5)
+        said = str(e.exception)
+        self.assertIn("why: the graphics card ran out of memory", said)
+        self.assertIn("ErrorOutOfDeviceMemory", said)
+        self.assertIn(self.log, said)
+        self.assertNotIn("Run it by hand", said)
+
+    def test_an_unknown_stop_still_says_where_its_words_are(self):
+        self.write("something nobody has seen before\n")
+        said = server._stopped(FakeProc(7, self.log))
+        self.assertIn("something nobody has seen before", said)
+        self.assertIn(self.log, said)
+
+    def test_a_quiet_start_keeps_the_servers_words_in_the_folder(self):
+        seen = {}
+
+        class Popen(object):
+            def __init__(self, cmd, **kw):
+                seen.update(kw, cmd=cmd)
+
+        saved = (server.find_server, server._fits, server.subprocess.Popen, server.home)
+        server.find_server = lambda exe=None: "llama-server.exe"
+        server._fits = lambda m, p: True
+        server.subprocess.Popen = Popen
+        server.home = lambda sub="": self.d
+        try:
+            proc = server.start(model="m.gguf", mmproj="p.gguf", quiet=True)
+        finally:
+            server.find_server, server._fits, server.subprocess.Popen, server.home = saved
+        self.assertNotEqual(seen.get("stdout"), server.subprocess.DEVNULL)
+        self.assertEqual(seen.get("stderr"), server.subprocess.STDOUT)
+        self.assertEqual(proc.log_path, os.path.join(self.d, "llama-server.log"))
+        self.assertNotIn("-ngl", seen["cmd"])
 
 
 if __name__ == "__main__":

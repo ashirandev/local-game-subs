@@ -362,7 +362,7 @@ def cmd_check(a):
         if not base:
             m, mp = _choose_model(a)
             proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
-            base = "http://127.0.0.1:%d/v1" % a.server_port
+            base = "http://127.0.0.1:%d/v1" % proc.port
             print("waiting for it to answer a question about a picture...")
             server.wait_until_it_can_see(base, a.model, proc=proc)
             print("it can see.\n")
@@ -680,7 +680,7 @@ def cmd_play(a):
                 _say(pn, "loading %s ..." % os.path.basename(m))
                 proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
 
-        base = a.base_url or "http://127.0.0.1:%d/v1" % a.server_port
+        base = a.base_url or "http://127.0.0.1:%d/v1" % (proc.port if proc else a.server_port)
         _say(pn, "drag a box round the game's subtitles, then press Enter")
         band = _band(a)                          # the one thing that is a gesture, not a field
         if proc:

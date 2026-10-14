@@ -746,6 +746,59 @@ class WhyItStopped(unittest.TestCase):
         self.assertEqual(proc.log_path, os.path.join(self.d, "llama-server.log"))
         self.assertNotIn("-ngl", seen["cmd"])
 
+    # The engine's own words in a player's 1.0.2 screenshot (2026-10-14, RTX 5060 8 GB, code 1).
+    PORT_TAKEN_LOG = ("0.00.232.629 W srv  llama_server: security: no API key is set and CORS allows all origins\n"
+                      "0.00.233.591 E srv          start: couldn't bind HTTP server socket, hostname: 127.0.0.1, "
+                      "port: 8080\n0.00.233.808 E srv  llama_server: exiting due to HTTP server error\n")
+
+    def test_a_port_taken_by_another_program_is_said_in_words(self):
+        why, act = server.why_it_stopped(1, self.PORT_TAKEN_LOG)
+        self.assertIn("port", why)
+        self.assertIn("again", act)
+
+    def hold(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        self.addCleanup(s.close)
+        return s.getsockname()[1]
+
+    def test_a_taken_port_is_stepped_over(self):
+        taken = self.hold()
+        got = server.free_port(taken)
+        self.assertNotEqual(got, taken)
+        self.assertTrue(taken < got < taken + server.PORT_SCAN)
+        self.assertEqual(server.free_port(got), got, "a free port is not kept")
+
+    def test_the_engine_starts_on_a_free_port_and_says_which(self):
+        taken, seen = self.hold(), {}
+
+        class Popen(object):
+            def __init__(self, cmd, **kw):
+                seen.update(kw, cmd=cmd)
+
+        saved = (server.find_server, server._fits, server.subprocess.Popen, server.home)
+        server.find_server = lambda exe=None: "llama-server.exe"
+        server._fits = lambda m, p: True
+        server.subprocess.Popen = Popen
+        server.home = lambda sub="": self.d
+        try:
+            proc = server.start(model="m.gguf", mmproj="p.gguf", port=taken, quiet=True)
+        finally:
+            server.find_server, server._fits, server.subprocess.Popen, server.home = saved
+        port = int(seen["cmd"][seen["cmd"].index("--port") + 1])
+        self.assertNotEqual(port, taken)
+        self.assertEqual(proc.port, port, "the address the program asks is not where the engine listens")
+
+    def test_play_and_check_ask_the_port_the_engine_got(self):
+        with io.open(os.path.join(__file__.rsplit("tests", 1)[0], "src", "gamesubs", "__main__.py"),
+                     encoding="utf-8") as f:
+            src = f.read()
+        self.assertEqual(src.count("% proc.port"), 1)
+        self.assertIn("(proc.port if proc else a.server_port)", src)
+        self.assertNotIn('"http://127.0.0.1:%d/v1" % a.server_port', src)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

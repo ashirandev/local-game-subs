@@ -400,6 +400,18 @@ MUTANTS = [
     ("region.py", "        ctypes.windll.shcore.SetProcessDpiAwareness(2)      # refused, harmlessly, if already set",
      "        ctypes.windll.shcore.SetProcessDpiAwareness(1)      # refused, harmlessly, if already set",
      'system-wide instead of per monitor: a second screen at another scale is counted wrong'),
+    # 2026-10-14: a player's 1.0.2 screenshot -- "couldn't bind HTTP server socket ... port: 8080", code 1.
+    ("server.py", "    asked, port = port, free_port(port)", "    asked, port = port, port",
+     'the engine is started on 8080 whatever already holds it'),
+    ("server.py", "            s.bind((\"127.0.0.1\", p))" + NL + "            return p",
+     "            return p",
+     'every port counts as free, so a taken one is handed to the engine'),
+    ("__main__.py", '            base = "http://127.0.0.1:%d/v1" % proc.port',
+     '            base = "http://127.0.0.1:%d/v1" % a.server_port',
+     'check asks 8080 while the engine listens on the free port it was given'),
+    ("server.py", '     "another program on this PC took the port the engine was about to use.",',
+     '     "the engine stopped.",',
+     'a port taken by another program is not said in words'),
 ]
 
 

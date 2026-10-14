@@ -861,19 +861,51 @@ def start(model=None, mmproj=None, exe=None, port=8080, extra=None, quiet=True):
         raise SystemExit("%s (%s wide) and %s (%s wide) are not a pair -- the projector belongs "
                          "to a different model." % (os.path.basename(model), gguf_width(model),
                                                     os.path.basename(mmproj), gguf_width(mmproj)))
+    # A free port, not 8080 because it is the default: a player's 1.0.2 screenshot (2026-10-14)
+    # said "couldn't bind HTTP server socket ... port: 8080" and code 1 -- something else on that
+    # PC held it. The caller reads proc.port for the address.
+    asked, port = port, free_port(port)
     cmd = [exe, "-m", model, "--mmproj", mmproj, "--port", str(port),
            "--host", "127.0.0.1"] + FLAGS + list(extra or [])
     print("starting: %s\n  model: %s" % (os.path.basename(exe), os.path.basename(model)))
+    if port != asked:
+        print("  port %d is in use by another program, so the model uses %d" % (asked, port))
     if not quiet:
-        return subprocess.Popen(cmd)
-    # Never DEVNULL. The server says why it stopped, and throwing that away left a player with
-    # "exited (code 1). Run it by hand to see why" -- which nobody does. Kept in the folder, one
-    # file, overwritten each start, never sent anywhere.
-    log = open(server_log(), "w", encoding="utf-8", errors="replace")
-    proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
-    log.close()                     # the server holds its own handle; ours is not needed
-    proc.log_path = log.name
+        proc = subprocess.Popen(cmd)
+    else:
+        # Never DEVNULL. The server says why it stopped, and throwing that away left a player with
+        # "exited (code 1). Run it by hand to see why" -- which nobody does. Kept in the folder,
+        # one file, overwritten each start, never sent anywhere.
+        log = open(server_log(), "w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)
+        log.close()                 # the server holds its own handle; ours is not needed
+        proc.log_path = log.name
+    proc.port = port
     return proc
+
+
+PORT_SCAN = 50
+
+
+def free_port(preferred):
+    """`preferred` if nothing on this PC is listening there, else the next free one above it.
+
+    Asked by binding, not by connecting: Windows reserves whole port ranges for Hyper-V and WSL
+    where nothing answers a connection and nothing else may listen either.
+    """
+    import socket
+    for p in range(preferred, preferred + PORT_SCAN):
+        s = socket.socket()
+        try:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            s.bind(("127.0.0.1", p))
+            return p
+        except OSError:
+            continue
+        finally:
+            s.close()
+    return preferred                # all taken: the server will say so, and why_it_stopped reads it
 
 
 def server_log():
@@ -892,6 +924,11 @@ WHY = [
       "no usable gpu"),
      "no graphics card that the engine can use was found.",
      "Update the graphics driver from NVIDIA, AMD or Intel and try again."),
+    # Measured: a player's 1.0.2 screenshot, 2026-10-14, code 1. start() now picks a free port, so
+    # this is left for a port taken in the instant between that check and the server's own bind.
+    (("couldn't bind http server socket", "could not bind http server socket"),
+     "another program on this PC took the port the engine was about to use.",
+     "Start it again: it looks for a free port each time."),
     (("unknown model architecture",),
      "this llama.cpp is too old for the model.",
      "Run setup again to get a newer llama.cpp."),

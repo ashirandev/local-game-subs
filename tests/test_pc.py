@@ -53,11 +53,17 @@ class OnThisPC(unittest.TestCase):
         self.assertLessEqual(abs(card["total_mb"] - ref["total"]), TOLERANCE_MB, (card["total_mb"], ref["total"]))
 
     def test_memory_in_use_matches_nvidia_smi(self):
-        diffs = []
+        # Bracketed: nvidia-smi just before and just after. Memory in use moves while anything else runs (a browser,
+        # another test), and one reading taken after the other once failed a correct reader on a busy PC.
+        misses = []
         for _ in range(5):
-            used, ref = pc.gpus()[0]["used_mb"], nvsmi()["used"]
-            diffs.append(None if used is None else used - ref)
-        self.assertTrue(all(d is not None and abs(d) <= TOLERANCE_MB for d in diffs), diffs)
+            before = nvsmi()["used"]
+            used = pc.gpus()[0]["used_mb"]
+            after = nvsmi()["used"]
+            lo, hi = min(before, after) - TOLERANCE_MB, max(before, after) + TOLERANCE_MB
+            if used is None or not lo <= used <= hi:
+                misses.append((before, used, after))
+        self.assertEqual(misses, [], "(nvidia-smi before, this reader, nvidia-smi after)")
 
     def test_the_driver_is_the_number_nvidia_publishes(self):
         self.assertEqual(pc.gpus()[0]["driver"], nvsmi()["driver"])

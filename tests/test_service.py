@@ -201,6 +201,11 @@ class BeingSpokenToIsNotBeingTheSpeaker(unittest.TestCase):
         self.assertIn("NOT ", service.PROMPT)
         self.assertIn("`speaker`", service.PROMPT)
 
+    def test_the_prompt_asks_for_an_exact_copy_of_the_screen(self):
+        """`en` is what the screen says, word for word. A summary of it would make a bad READ and
+        a bad translation look the same, and the English is the only thing that tells them apart."""
+        self.assertIn("EXACTLY", service.PROMPT)
+
     def test_the_prompt_does_not_try_to_decide_what_counts_as_a_subtitle(self):
         """It used to tell the model to return nothing for a menu, an inventory or a HUD,
         and both models ignored it -- 3/3 each on an inventory screen, and caught live on a

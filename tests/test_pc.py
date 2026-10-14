@@ -162,6 +162,44 @@ class WhichAdapterIsWhat(unittest.TestCase):
         self.assertFalse(pc.combine(self.adapter(dedicated_mb=6144), {})["integrated"])
 
 
+class EachCardOnce(unittest.TestCase):
+    """A player's screenshot (2026-10-14) listed one card twice, the second with no memory in use."""
+
+    def card(self, name="NVIDIA GeForce RTX 5060", used=1200, integrated=False, vendor="NVIDIA"):
+        return {"name": name, "vendor": vendor, "integrated": integrated, "total_mb": 8192, "used_mb": used}
+
+    def test_the_second_entry_without_a_reading_is_left_out(self):
+        self.assertEqual(pc.distinct([self.card(), self.card(used=None)]), [self.card()])
+
+    def test_it_is_left_out_even_when_windows_lists_it_first(self):
+        self.assertEqual(pc.distinct([self.card(used=None), self.card()]), [self.card()])
+
+    def test_two_real_cards_of_one_model_both_stay(self):
+        self.assertEqual(len(pc.distinct([self.card(used=900), self.card(used=300)])), 2)
+
+    def test_a_card_windows_will_not_count_at_all_still_shows(self):
+        # No reading anywhere (counters off): nothing to tell a copy from a card, so nothing is hidden.
+        self.assertEqual(len(pc.distinct([self.card(used=None)])), 1)
+        self.assertEqual(len(pc.distinct([self.card(used=None), self.card(used=None)])), 2)
+
+    def test_built_in_graphics_and_other_cards_are_untouched(self):
+        cards = [self.card(), self.card(name="Intel(R) UHD Graphics 770", vendor="Intel", used=None, integrated=True),
+                 self.card(name="AMD Radeon RX 7600", vendor="AMD", used=None)]
+        self.assertEqual(pc.distinct(cards), cards)
+
+    def test_the_block_shows_it_once(self):
+        saved = (pc.WINDOWS, pc._adapters, pc._registry, pc.counter_mb)
+        two = [{"name": "NVIDIA GeForce RTX 5060", "vendor": "NVIDIA", "vendor_id": 0x10DE, "device_id": 0x2D05,
+                "dedicated_mb": 7900, "luid": luid, "uma": False} for luid in ("luid_a", "luid_b")]
+        pc.WINDOWS, pc._adapters, pc._registry = True, lambda: two, lambda: {}
+        pc.counter_mb = lambda path: 1200 if "luid_a" in path else None
+        try:
+            got = pc.lines(readers={"windows": lambda: "Windows 11", "cpu": lambda: "cpu", "ram": lambda: (16384, 8192)})
+        finally:
+            pc.WINDOWS, pc._adapters, pc._registry, pc.counter_mb = saved
+        self.assertEqual(sum("RTX 5060" in line for line in got), 1, got)
+
+
 class DriverNumbers(unittest.TestCase):
 
     def test_nvidia_is_the_number_on_nvidias_site(self):

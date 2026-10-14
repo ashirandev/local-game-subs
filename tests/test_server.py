@@ -698,7 +698,42 @@ class WhyItStopped(unittest.TestCase):
     def test_the_measured_out_of_memory_words_are_read_as_memory(self):
         why, act = server.why_it_stopped(1, OUT_OF_MEMORY_LOG)
         self.assertIn("ran out of memory", why)
-        self.assertIn("E2B", act)
+        self.assertIn("Close other programs", act)
+        # The words every player gets promise no model: which one fits depends on the folder.
+        self.assertNotIn("E2B", act)
+
+    def model_args(self, *have):
+        for name in have:
+            open(os.path.join(self.d, server.CATALOG[name]["weights"]), "wb").close()
+        return ["llama-server.exe", "-m", os.path.join(self.d, server.CATALOG["e4b"]["weights"]), "--port", "8080"]
+
+    def test_on_e4b_with_e2b_in_the_folder_it_says_choose_it(self):
+        said = server.smaller_model(self.model_args("e4b", "e2b"))
+        self.assertIn("choose it in the settings window", said)
+        self.assertNotIn("setup", said)
+
+    def test_on_e4b_without_e2b_it_says_how_to_get_it(self):
+        # The settings window lists only the models in the folder (panel._models): sending this
+        # player there to pick E2B sends them looking for a choice that is not there.
+        said = server.smaller_model(self.model_args("e4b"))
+        self.assertIn("python -m gamesubs setup --model-name e2b", said)
+
+    def test_on_e2b_or_a_model_of_their_own_it_says_no_switch(self):
+        e2b = os.path.join(self.d, server.CATALOG["e2b"]["weights"])
+        self.assertEqual(server.smaller_model(["llama-server.exe", "-m", e2b]), "")
+        self.assertEqual(server.smaller_model(["llama-server.exe", "-m", os.path.join(self.d, "mine.gguf")]), "")
+        self.assertEqual(server.smaller_model(None), "")
+        self.assertEqual(server.smaller_model(["llama-server.exe", "-m"]), "")
+
+    def test_the_stop_message_carries_the_line_for_this_folder(self):
+        self.write(OUT_OF_MEMORY_LOG)
+        proc = FakeProc(1, self.log)
+        proc.args = self.model_args("e4b")
+        said = server._stopped(proc)
+        self.assertIn("what to try: Close other programs", said)
+        self.assertIn("setup --model-name e2b", said)
+        proc.args = ["llama-server.exe", "-m", os.path.join(self.d, server.CATALOG["e2b"]["weights"])]
+        self.assertNotIn("E2B", server._stopped(proc).split("the server's last words")[0])
 
     def test_the_crash_code_speaks_when_the_words_do_not(self):
         why, act = server.why_it_stopped(3221226505, HEALTHY_LOG)

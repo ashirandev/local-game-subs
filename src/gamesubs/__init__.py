@@ -7,4 +7,4 @@ Everything runs on one machine. Nothing is uploaded.
     from gamesubs.vision import VisionClient
     from gamesubs.service import Current, Worker, serve_http
 """
-__version__ = "1.0.3"
+__version__ = "1.0.4"

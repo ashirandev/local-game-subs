@@ -918,8 +918,7 @@ def server_log():
 WHY = [
     (("erroroutofdevicememory", "failed to allocate", "out of memory", "failed to fit params"),
      "the graphics card ran out of memory for this model.",
-     "Close other programs that use the card (a game that is already running counts). On E4B,\n"
-     "  the smaller E2B in the settings window needs 1.6 GB less."),
+     "Close other programs that use the card (a game that is already running counts)."),
     (("no vulkan devices", "vulkan: no devices", "failed to initialize vulkan", "vk::createinstance",
       "no usable gpu"),
      "no graphics card that the engine can use was found.",
@@ -967,6 +966,23 @@ def why_it_stopped(code, text):
             "Send the file below when you ask for help.")
 
 
+def smaller_model(args):
+    """For a card out of memory: the smaller model, in words true for this player's folder. -> "" when
+    they are already on the smaller one, or the model is not one setup fetches.
+
+    1.0.2 said "the smaller E2B in the settings window" to everyone, and the settings window lists only
+    the models in the folder: a player who set up E4B before E2B became the default was sent to look
+    for a choice that is not there, and one already on E2B was told to switch to it.
+    """
+    path = args[args.index("-m") + 1] if args and "-m" in args[:-1] else ""
+    if os.path.basename(path).lower() != CATALOG["e4b"]["weights"].lower():
+        return ""
+    if os.path.isfile(os.path.join(os.path.dirname(path), CATALOG["e2b"]["weights"])):
+        return "E2B is in your models folder and needs 1.6 GB less: choose it in the settings window."
+    return ("E2B needs 1.6 GB less. Get it with: python -m gamesubs setup --model-name e2b\n"
+            "  then choose it in the settings window.")
+
+
 def _stopped(proc):
     code = proc.returncode
     path = getattr(proc, "log_path", None)
@@ -978,6 +994,9 @@ def _stopped(proc):
         except OSError:
             pass
     why, act = why_it_stopped(code, text)
+    args = getattr(proc, "args", None)
+    if why == WHY[0][1] and smaller_model(args):
+        act += "\n  " + smaller_model(args)
     shown = "%s (0x%08X)" % (code, code & 0xFFFFFFFF) if code and code > 255 else str(code)
     msg = ["the model server stopped before it was ready (code %s)." % shown,
            "  why: %s" % why, "  what to try: %s" % act]
@@ -988,7 +1007,6 @@ def _stopped(proc):
         msg.append("  all of them: %s" % path)
     # Beside the error, not only at the top of the console: by the time it stops, the start of the
     # window has scrolled away, and this screenshot is the one a player sends.
-    args = getattr(proc, "args", None)
     msg.append(pc.block(engine_line(args[0] if args else None)))
     return "\n".join(msg)
 

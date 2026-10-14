@@ -286,7 +286,17 @@ def gpus():
         if not g["integrated"]:
             g["used_mb"] = _safe(counter_mb, "\\GPU Adapter Memory(%s_phys_*)\\Dedicated Usage" % a["luid"])
         out.append(g)
-    return out
+    return distinct(out)
+
+
+def distinct(cards):
+    """Each card once. A player's screenshot (2026-10-14) listed the same card twice, the second time with no
+    memory in use: a second entry Windows keeps for the same card, which has no counter of its own. A card is
+    left out only when one of the same name and maker HAS a memory reading and it has none -- two real cards
+    of one model are each counted, so both stay; built-in graphics has no reading to compare and always stays."""
+    counted = {(c["name"], c["vendor"]) for c in cards if c.get("used_mb") is not None}
+    return [c for c in cards if c.get("integrated") or c.get("used_mb") is not None
+            or (c["name"], c["vendor"]) not in counted]
 
 
 def combine(adapter, reg):

@@ -14,7 +14,15 @@ set VENVPY=%~dp0.venv\Scripts\python.exe
 
 REM `call`, because `python` can be a batch file (pyenv-win puts one on PATH). Run without `call`,
 REM cmd hands the rest of this file to it and never comes back: the window closes without a word.
+set BASEPY=python
 call python --version >nul 2>&1
+if not errorlevel 1 goto havepython
+REM Python's own launcher, `py`, is there even when "Add Python to PATH" was left unticked, and the
+REM newer Python install manager has no such box at all (a player on 15 Oct 2026: Python installed,
+REM `python` not found). <nul: if it asks a question, it gets an answer instead of a hidden wait. The
+REM install manager downloads a Python on its first run, so say something before a silent minute.
+echo Looking for Python ^(the first run may download it, which can take a minute^)...
+call py --version <nul >nul 2>&1
 if errorlevel 1 (
   echo Python is not installed, or it was installed without "Add Python to PATH".
   echo Get it from https://www.python.org/downloads/ and tick that box during setup.
@@ -22,10 +30,12 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+set BASEPY=py
+:havepython
 
 if exist "%VENVPY%" goto haveenv
 echo Creating a private Python inside this folder ^(.venv^)...
-call python -m venv "%~dp0.venv"
+call %BASEPY% -m venv "%~dp0.venv"
 if errorlevel 1 (
   echo Could not create the virtual environment.
   echo.

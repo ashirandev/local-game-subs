@@ -434,8 +434,12 @@ MUTANTS = [
     # setup.bat sits at the top of the repo, not in src/gamesubs, hence the path
     ("../../setup.bat", "call python --version >nul 2>&1", "python --version >nul 2>&1",
      'a python that is a batch file (pyenv) takes the run with it: setup.bat closes without a word'),
-    ("../../setup.bat", 'call python -m venv "%~dp0.venv"', 'python -m venv "%~dp0.venv"',
+    ("../../setup.bat", 'call %BASEPY% -m venv "%~dp0.venv"', '%BASEPY% -m venv "%~dp0.venv"',
      'the private Python gets made and setup.bat never comes back to install anything into it'),
+    ("../../setup.bat", "set BASEPY=py\n", "set BASEPY=python\n",
+     'Python installed without "Add to PATH": py is found, but the private Python is still asked of python'),
+    ("../../setup.bat", "if not errorlevel 1 goto havepython", "goto havepython",
+     'no Python at all: the player is not told to install it, setup.bat stumbles on into a venv it cannot make'),
 ]
 
 

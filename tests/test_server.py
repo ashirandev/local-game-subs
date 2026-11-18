@@ -212,6 +212,45 @@ class PickAssets(unittest.TestCase):
     def test_a_runtime_only_release_is_not_treated_as_a_build(self):
         self.assertEqual(server.pick_assets(["cudart-llama-bin-win-cuda-13.3-x64.zip"], "cuda"), [])
 
+    def test_cuda_takes_the_newest_build_that_has_its_own_runtime(self):
+        # 1.0.4 asked for 13.3 by name. By 2026-11-18 llama.cpp shipped 12.4 and 13.5 only, so every
+        # CUDA setup found nothing. These are that day's names (b12496): 13.5 is newer than 12.4.
+        names = sorted(["cudart-llama-bin-win-cuda-12.4-x64.zip", "cudart-llama-bin-win-cuda-13.5-x64.zip",
+                        "llama-b12496-bin-win-cuda-12.4-x64.zip", "llama-b12496-bin-win-cuda-13.5-x64.zip",
+                        "llama-b12496-bin-win-cuda-13.5-arm64.zip", "llama-b12496-bin-win-vulkan-x64.zip"])
+        self.assertEqual(server.pick_assets(names, "cuda"),
+                         ["llama-b12496-bin-win-cuda-13.5-x64.zip", "cudart-llama-bin-win-cuda-13.5-x64.zip"])
+
+    def test_a_cuda_build_without_its_own_runtime_is_not_taken(self):
+        names = sorted(["cudart-llama-bin-win-cuda-13.3-x64.zip", "llama-b9-bin-win-cuda-13.3-x64.zip",
+                        "llama-b9-bin-win-cuda-13.5-x64.zip"])
+        self.assertEqual(server.pick_assets(names, "cuda"),
+                         ["llama-b9-bin-win-cuda-13.3-x64.zip", "cudart-llama-bin-win-cuda-13.3-x64.zip"])
+
+
+def _rel(tag, names):
+    return {"tag_name": tag, "assets": [{"name": n} for n in names]}
+
+
+class LatestBuild(unittest.TestCase):
+    """A release is published before its files. 2026-11-18: b12497 had only its CPU zips for minutes."""
+
+    RELS = [_rel("b12497", ["llama-b12497-bin-win-cpu-x64.zip", "cudart-llama-bin-win-cuda-13.5-x64.zip"]),
+            _rel("b12496", ["llama-b12496-bin-win-cpu-x64.zip", "llama-b12496-bin-win-vulkan-x64.zip",
+                            "llama-b12496-bin-win-cuda-13.5-x64.zip", "cudart-llama-bin-win-cuda-13.5-x64.zip"]),
+            _rel("master", ["llama-master.zip"])]
+
+    def test_a_release_still_uploading_is_passed_over_for_the_one_before_it(self):
+        self.assertEqual(server._latest_build("vulkan", self.RELS)["tag_name"], "b12496")
+        self.assertEqual(server._latest_build("cuda", self.RELS)["tag_name"], "b12496")
+
+    def test_the_newest_release_is_still_taken_when_it_has_the_build(self):
+        self.assertEqual(server._latest_build("cpu", self.RELS)["tag_name"], "b12497")
+
+    def test_no_release_with_the_build_says_so_instead_of_downloading_nothing(self):
+        with self.assertRaises(SystemExit):
+            server._latest_build("vulkan", self.RELS[:1])
+
 
 class OneFolder(unittest.TestCase):
     """Everything the tool installs lives beside the scripts, so uninstalling is deleting it."""

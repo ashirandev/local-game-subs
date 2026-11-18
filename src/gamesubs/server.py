@@ -733,24 +733,35 @@ LLAMA_API = "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=1
 # driver, and it works on NVIDIA, AMD and Intel alike. What that costs in speed is in the README.
 BACKENDS = {
     "vulkan": ("bin-win-vulkan-x64", None),
-    "cuda": ("bin-win-cuda-13.3-x64", "cudart-llama-bin-win-cuda-13.3-x64"),
+    "cuda": ("bin-win-cuda-", "cudart-llama-bin-win-cuda-"),
     "cpu": ("bin-win-cpu-x64", None),
 }
+# CUDA is never asked for by one exact version: the newest build in the release is taken, with the
+# runtime zip of its own version beside it (a runtime of another version does not load). 1.0.4 asked
+# for 13.3, and by 2026-11-18 llama.cpp shipped 12.4 and 13.5 only: every CUDA setup found nothing.
+CUDA_BUILD = re.compile(r"^llama-b\d+-bin-win-cuda-(\d+)\.(\d+)-x64\.zip$")
 
 
-def _latest_build():
-    """The newest release that actually carries binaries.
+def _latest_build(backend="vulkan", rels=None):
+    """The newest release that carries the build `backend` needs.
 
     Deliberately NOT /releases/latest. That endpoint answers with a tag holding a single asset
     and no llama-server anywhere in it; the builds live in the b-numbered releases. Asking the
     obvious endpoint hands a new user a download that cannot possibly work.
+
+    And not simply the newest b-release either. A release is published before its files are: on
+    2026-11-18 b12497 carried only its CPU zips for several minutes while the rest uploaded, and a
+    player who ran setup in that window got no Vulkan build and no llama-server. llama.cpp publishes
+    one every 20 to 60 minutes, so any setup can land in that gap: walk back to the newest release
+    that has this backend's files. `rels` is the release list, for a test.
     """
-    req = urllib.request.Request(LLAMA_API, headers={"User-Agent": "local-game-subs"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        rels = json.load(r)
+    if rels is None:
+        req = urllib.request.Request(LLAMA_API, headers={"User-Agent": "local-game-subs"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            rels = json.load(r)
     for rel in rels:
         if rel.get("tag_name", "").startswith("b") and \
-                any(a["name"].startswith("llama-") for a in rel["assets"]):
+                pick_assets(sorted(a["name"] for a in rel["assets"]), backend):
             return rel
     raise SystemExit("no llama.cpp build release found. Download one by hand from "
                      "https://github.com/ggml-org/llama.cpp/releases")
@@ -767,13 +778,19 @@ def pick_assets(names, backend):
     So the binary is identified by BOTH the platform substring and the `llama-` prefix, and the
     runtime by its own full prefix.
     """
-    want, runtime = BACKENDS[backend]
-    out = [n for n in names if want in n and n.startswith("llama-")]
-    if out and runtime:
+    if backend == "cuda":
         # The CUDA build ships WITHOUT the CUDA runtime DLLs, and missing them llama-server does
-        # not explain itself: a DLL error box, or on some systems nothing at all.
-        out += [n for n in names if n.startswith(runtime)]
-    return out
+        # not explain itself: a DLL error box, or on some systems nothing at all. So a build counts
+        # only with the runtime of its own version beside it.
+        got = []
+        for n in names:
+            m = CUDA_BUILD.match(n)
+            runtime = m and "cudart-llama-bin-win-cuda-%s.%s-x64.zip" % m.groups()
+            if runtime and runtime in names:
+                got.append(((int(m.group(1)), int(m.group(2))), n, runtime))
+        return list(max(got)[1:]) if got else []
+    want, _runtime = BACKENDS[backend]
+    return [n for n in names if want in n and n.startswith("llama-")]
 
 
 def fetch_llama(backend="vulkan", dest_dir=None):
@@ -785,7 +802,7 @@ def fetch_llama(backend="vulkan", dest_dir=None):
     if backend not in BACKENDS:
         raise SystemExit("unknown backend %r. Pick one of: %s"
                          % (backend, ", ".join(sorted(BACKENDS))))
-    rel = _latest_build()
+    rel = _latest_build(backend)
     # One folder per backend. Same filename, same version string, six times the speed between
     # them -- so which build this is has to be readable from somewhere, and the path is the one
     # place that survives unzipping.

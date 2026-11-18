@@ -635,6 +635,36 @@ def _say(pn, text):
         pass
 
 
+def _finish_setup(a, models_dir=None, say=print):
+    """Finish a setup that stopped half way, before anything starts. -> what was fetched, as names.
+
+    A player on 1.0.4 (2026-11-18) had a setup that stopped between the model and its projector, and
+    then, after setup ran again, no llama-server, because the newest llama.cpp release was still
+    uploading its files. Both times play said what was missing and closed. Here play gets exactly
+    what setup itself gets, from the same two places, and only what is missing -- so on a PC where
+    setup finished, play still reaches nothing outside this PC (tests/test_no_phone_home.py).
+
+    Not when the model is served elsewhere (--base-url), and no llama.cpp when one was named with
+    --llama-server: a path the player typed is theirs to fix, not ours to download around.
+    """
+    if a.base_url:
+        return []
+    got = []
+    if not a.llama_server and not server.find_server(None):
+        say("llama.cpp is not on this PC yet: setup did not finish. Getting it now, once ...")
+        server.fetch_llama("vulkan")
+        got.append("llama.cpp")
+    d = models_dir or server.home("models")
+    for key, e in sorted(server.CATALOG.items()):
+        if os.path.isfile(os.path.join(d, e["weights"])) and \
+                not os.path.isfile(os.path.join(d, e["save_as"])):
+            say("%s has no picture reader yet: setup did not finish. Getting %s now, once ..."
+                % (e["weights"], e["save_as"]))
+            server.fetch_model(d, key)
+            got.append(e["save_as"])
+    return got
+
+
 def cmd_play(a):
     """Model, translator and overlay, from one command.
 
@@ -659,6 +689,7 @@ def cmd_play(a):
         if a.no_panel:
             _say_the_pc(a)
             font = _choose_font(a)
+            _finish_setup(a)
             if not a.base_url:
                 m, mp = _choose_model(a)
                 proc = server.start(model=m, mmproj=mp, exe=a.llama_server, port=a.server_port)
@@ -674,6 +705,7 @@ def cmd_play(a):
             _drain(pn)
             tune = server.load_tuning()
             font = server.load_font()
+            _finish_setup(a, say=lambda t: (print(t), _say(pn, t)))
             if not a.base_url:
                 m, mp = server.resolve_model(tune.get("model") or a.model_file,
                                              server.home("models"))

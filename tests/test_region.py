@@ -84,7 +84,17 @@ class TheBoxGetsALittleAir(unittest.TestCase):
         the font search this morning: both halves correct, nothing joining them."""
         from gamesubs.__main__ import _band
         try:
-            b = _band(Args(region="600,1200,400,60", monitor=1, frac=0.25, wfrac=0.7,
+            import mss
+            with mss.mss() as s:
+                mons = s.monitors
+            # The box below, grown, is 590..1030 across and 1190..1270 down, in desktop pixels. It needs
+            # the screen that holds that spot. Screen 1 is not always that one: on 2026-11-18 it was a
+            # portrait screen to the left of the main one here, and the box was clamped to 1 px.
+            fits = [i for i, m in enumerate(mons) if i and m["left"] <= 590 and m["left"] + m["width"] >= 1030
+                    and m["top"] <= 1190 and m["top"] + m["height"] >= 1290]
+            if not fits:
+                self.skipTest("no screen here holds 590..1030 x 1190..1290")
+            b = _band(Args(region="600,1200,400,60", monitor=fits[0], frac=0.25, wfrac=0.7,
                            pad=10, no_select=True))
         except Exception as e:                                # noqa: BLE001
             self.skipTest("no screen here: %s" % e)

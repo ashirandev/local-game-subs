@@ -443,6 +443,53 @@ def _or_saved(flag, saved):
 
 LAST = {"line": None, "n": 0}
 
+# A line read on a graphics card takes 0.6 to 1.1 s; on 28 processor cores, 3.0 s (README, measured).
+# Above this the model is not (all) on the card, and a player only sees "slow" and guesses.
+SLOW_S = 2.0
+SLOW = {"secs": [], "said": False}
+
+
+def slow_note(times, cards):
+    """What it means when the first three reads are slow, in words for the player. -> lines, or [].
+
+    A player on 1.0.4 (2026-11-18) saw every line take 9 to 11 s and asked whether it was their card
+    or something they forgot to download; the console had the answer nowhere. llama.cpp fits the
+    model to the card memory that is FREE when it starts, so a game already holding the card
+    leaves it on the processor, and nothing errors. The middle of three, not the mean: the first
+    read can be slow by itself, and one slow read is not a slow PC.
+    """
+    if len(times) < 3:
+        return []
+    mid = sorted(times[:3])[1]
+    if mid <= SLOW_S:
+        return []
+    out = ["",
+           "  Each line is taking about %.1f s. On a graphics card it takes about 1 s, so the model" % mid,
+           "  is running partly or wholly on the processor instead."]
+    card = next((c for c in cards or [] if not c.get("integrated")), None)
+    if card is None:
+        out += ["  This PC has no graphics card of its own%s," % (" (only the one built into the processor)"
+                                                               if cards else ""),
+                "  so about this speed is what to expect."]
+        return out + [""]
+    used = card.get("used_mb")
+    out += ["  graphics: %s | %s%s" % (card["name"], pc.gb(card.get("total_mb") or 0),
+                                       ", %s in use now" % pc.gb(used) if used is not None else ""),
+            "  The usual reason: the game holds most of the card's memory, and the model (about 3 GB,",
+            "  E4B 4.6 GB) did not fit beside it. The engine decides this when play.bat starts, so:",
+            "    - close other programs that use the card, then start play.bat again, or",
+            "    - start play.bat BEFORE the game (the game may then run a little slower), or",
+            "    - lower the game's texture quality, which frees the most card memory.",
+            ""]
+    return out
+
+
+def _cards():
+    try:
+        return pc.gpus()
+    except Exception:
+        return []
+
 
 def _log(secs=None, blank=False, error=None, speaker="", source="", text="",
          tokens=None, repeat=False):
@@ -456,6 +503,12 @@ def _log(secs=None, blank=False, error=None, speaker="", source="", text="",
     if error:
         print("  [model] %s" % error)
         return
+    if secs is not None and not SLOW["said"]:
+        SLOW["secs"].append(secs)
+        if len(SLOW["secs"]) >= 3:
+            SLOW["said"] = True
+            for line in slow_note(SLOW["secs"], _cards()):
+                print(line)
     if blank:
         print("  [%5.1fs] (no subtitle in that frame)" % secs)
         LAST["line"] = None

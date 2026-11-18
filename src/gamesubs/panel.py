@@ -58,6 +58,25 @@ ROWS = [
 ]
 
 
+def read_status(on_line):
+    """Hand each STATUS line the parent writes on our stdin to `on_line`, until the pipe closes.
+
+    Through its own unbuffered handle on the pipe, never sys.stdin.buffer. A daemon thread waiting
+    in sys.stdin.buffer.readline holds that buffer's lock, and when the window is closed Python
+    cannot take the lock to shut down: "Fatal Python error: _enter_buffered_busy" and a stack dump
+    in the player's console on every close -- 10 of 10 on Python 3.11, 3.13 and 3.14, first seen
+    on a player's screen on 2026-11-18. A raw handle has no lock to hold.
+    """
+    try:
+        src = open(sys.stdin.fileno(), "rb", buffering=0, closefd=False)
+        for raw in iter(src.readline, b""):
+            line = raw.decode("utf-8", "replace").strip()
+            if line.startswith("STATUS "):
+                on_line(line[7:])
+    except Exception:
+        pass
+
+
 class Panel:
 
     def __init__(self, launcher=False):
@@ -194,14 +213,8 @@ class Panel:
         window that looks broken. The pipe already exists in the other direction for the
         Start handshake, so this costs one thread and no new mechanism.
         """
-        try:
-            for raw in iter(sys.stdin.buffer.readline, b""):
-                line = raw.decode("utf-8", "replace").strip()
-                if line.startswith("STATUS "):
-                    # Tk is not thread-safe: hand the update to the loop that owns it.
-                    self.root.after(0, self.set_status, line[7:])
-        except Exception:
-            pass
+        # Tk is not thread-safe: hand the update to the loop that owns it.
+        read_status(lambda text: self.root.after(0, self.set_status, text))
 
     def _read_pc(self):
         try:
